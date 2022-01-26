@@ -162,6 +162,9 @@ type Policy struct {
 	// SetResponseHeaders sets response headers.
 	SetResponseHeaders map[string]string `mapstructure:"set_response_headers" yaml:"set_response_headers,omitempty"`
 
+	// OAuthRedirectURL overrides the default authenticate redirect URL for this route.
+	OAuthRedirectURL string `mapstructure:"oauth_redirect_url" yaml:"oauth_redirect_url,omitempty"`
+
 	Policy *PPLPolicy `mapstructure:"policy" yaml:"policy,omitempty" json:"policy,omitempty"`
 }
 

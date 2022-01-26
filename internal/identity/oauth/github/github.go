@@ -78,7 +78,7 @@ func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
 		ClientID:     o.ClientID,
 		ClientSecret: o.ClientSecret,
 		Scopes:       o.Scopes,
-		RedirectURL:  o.RedirectURL.String(),
+		RedirectURL:  o.RedirectURL,
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  urlutil.Join(o.ProviderURL, authURL),
 			TokenURL: urlutil.Join(o.ProviderURL, tokenURL),
@@ -241,8 +241,10 @@ func (p *Provider) Revoke(ctx context.Context, token *oauth2.Token) error {
 
 // GetSignInURL returns a URL to OAuth 2.0 provider's consent page
 // that asks for permissions for the required scopes explicitly.
-func (p *Provider) GetSignInURL(state string) (string, error) {
-	return p.Oauth.AuthCodeURL(state, oauth2.AccessTypeOffline), nil
+func (p *Provider) GetSignInURL(state, redirectURL string) (string, error) {
+	oa := *p.Oauth
+	oa.RedirectURL = redirectURL
+	return oa.AuthCodeURL(state, oauth2.AccessTypeOffline), nil
 }
 
 // LogOut is not implemented by github.

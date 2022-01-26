@@ -3,8 +3,6 @@
 // authorization with Bearer JWT.
 package oauth
 
-import "net/url"
-
 // Options contains the fields required for an OAuth 2.0 (inc. OIDC) auth flow.
 //
 // https://tools.ietf.org/html/rfc6749
@@ -22,7 +20,7 @@ type Options struct {
 	ClientSecret string
 	// RedirectURL is the URL to redirect users going through
 	// the OAuth flow, after the resource owner's URLs.
-	RedirectURL *url.URL
+	RedirectURL string
 	// Scope specifies optional requested permissions.
 	Scopes []string
 

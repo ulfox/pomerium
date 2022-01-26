@@ -899,7 +899,7 @@ func (o *Options) GetOauthOptions() (oauth.Options, error) {
 		Path: o.AuthenticateCallbackPath,
 	})
 	return oauth.Options{
-		RedirectURL:    redirectURL,
+		RedirectURL:    redirectURL.String(),
 		ProviderName:   o.Provider,
 		ProviderURL:    o.ProviderURL,
 		ClientID:       o.ClientID,

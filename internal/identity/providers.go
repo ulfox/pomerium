@@ -28,7 +28,7 @@ type Authenticator interface {
 	Authenticate(context.Context, string, identity.State) (*oauth2.Token, error)
 	Refresh(context.Context, *oauth2.Token, identity.State) (*oauth2.Token, error)
 	Revoke(context.Context, *oauth2.Token) error
-	GetSignInURL(state string) (string, error)
+	GetSignInURL(state, redirectURL string) (string, error)
 	Name() string
 	LogOut() (*url.URL, error)
 	UpdateUserInfo(ctx context.Context, t *oauth2.Token, v interface{}) error

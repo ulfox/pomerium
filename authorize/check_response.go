@@ -38,6 +38,7 @@ func (a *Authorize) handleResultAllowed(
 func (a *Authorize) handleResultDenied(
 	ctx context.Context,
 	in *envoy_service_auth_v3.CheckRequest,
+	req *evaluator.Request,
 	result *evaluator.Result,
 	isForwardAuthVerify bool,
 	reasons criteria.Reasons,
@@ -49,7 +50,7 @@ func (a *Authorize) handleResultDenied(
 	case reasons.Has(criteria.ReasonUserUnauthenticated):
 		// when the user is unauthenticated it means they haven't
 		// logged in yet, so redirect to authenticate
-		return a.requireLoginResponse(ctx, in, isForwardAuthVerify)
+		return a.requireLoginResponse(ctx, in, req, isForwardAuthVerify)
 	case reasons.Has(criteria.ReasonDeviceUnauthenticated):
 		// when the user's device is unauthenticated it means they haven't
 		// registered a webauthn device yet, so redirect to the webauthn flow
@@ -141,19 +142,20 @@ func (a *Authorize) deniedResponse(
 func (a *Authorize) requireLoginResponse(
 	ctx context.Context,
 	in *envoy_service_auth_v3.CheckRequest,
+	req *evaluator.Request,
 	isForwardAuthVerify bool,
 ) (*envoy_service_auth_v3.CheckResponse, error) {
 	opts := a.currentOptions.Load()
 	state := a.state.Load()
-	authenticateURL, err := opts.GetAuthenticateURL()
-	if err != nil {
-		return nil, err
-	}
 
 	if !a.shouldRedirect(in) || isForwardAuthVerify {
 		return a.deniedResponse(ctx, in, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized), nil)
 	}
 
+	authenticateURL, err := opts.GetAuthenticateURL()
+	if err != nil {
+		return nil, err
+	}
 	signinURL := authenticateURL.ResolveReference(&url.URL{
 		Path: "/.pomerium/sign_in",
 	})
@@ -164,6 +166,17 @@ func (a *Authorize) requireLoginResponse(
 	checkRequestURL.Scheme = "https"
 
 	q.Set(urlutil.QueryRedirectURI, checkRequestURL.String())
+
+	// If an OAuthRedirectURL is explicitly set, pass that on the query string to
+	// override the default authenticate redirect url.
+	if req.Policy != nil && req.Policy.OAuthRedirectURL != "" {
+		u, err := urlutil.ParseAndValidateURL(req.Policy.OAuthRedirectURL)
+		if err != nil {
+			return nil, err
+		}
+		q.Set(urlutil.QueryOAuthRedirectURI, u.String())
+	}
+
 	signinURL.RawQuery = q.Encode()
 	redirectTo := urlutil.NewSignedURL(state.sharedKey, signinURL).String()
 

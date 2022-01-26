@@ -23,6 +23,7 @@ import (
 	"github.com/pomerium/pomerium/internal/httputil"
 	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/internal/identity/manager"
+	"github.com/pomerium/pomerium/internal/identity/oauth"
 	"github.com/pomerium/pomerium/internal/identity/oidc"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/middleware"
@@ -56,7 +57,6 @@ func (a *Authenticate) Mount(r *mux.Router) {
 			csrf.Path("/"),
 			csrf.UnsafePaths(
 				[]string{
-					"/oauth2/callback",    // rfc6749#section-10.12 accepts GET
 					"/.pomerium/sign_out", // https://openid.net/specs/openid-connect-frontchannel-1_0.html
 				}),
 			csrf.FormValueName("state"), // rfc6749#section-10.12
@@ -306,13 +306,16 @@ func (a *Authenticate) reauthenticateOrFail(w http.ResponseWriter, r *http.Reque
 	}
 	state.sessionStore.ClearSession(w, r)
 	redirectURL := state.redirectURL.ResolveReference(r.URL)
-	nonce := csrf.Token(r)
-	now := time.Now().Unix()
-	b := []byte(fmt.Sprintf("%s|%d|", nonce, now))
-	enc := cryptutil.Encrypt(state.cookieCipher, []byte(redirectURL.String()), b)
-	b = append(b, enc...)
-	encodedState := base64.URLEncoding.EncodeToString(b)
-	signinURL, err := a.provider.Load().GetSignInURL(encodedState)
+
+	if rawOAuthRedirectURI := r.FormValue(urlutil.QueryOAuthRedirectURI); rawOAuthRedirectURI != "" {
+		redirectURL, err = urlutil.ParseAndValidateURL(rawOAuthRedirectURI)
+		if err != nil {
+			return httputil.NewError(http.StatusInternalServerError, err)
+		}
+	}
+
+	oauthState := oauth.NewState(redirectURL.String()).Encode(state.cookieCipher)
+	signinURL, err := a.provider.Load().GetSignInURL(oauthState, redirectURL.String())
 	if err != nil {
 		return httputil.NewError(http.StatusInternalServerError,
 			fmt.Errorf("failed to get sign in url: %w", err))
@@ -370,34 +373,12 @@ func (a *Authenticate) getOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return nil, fmt.Errorf("error redeeming authenticate code: %w", err)
 	}
 
-	// state includes a csrf nonce (validated by middleware) and redirect uri
-	bytes, err := base64.URLEncoding.DecodeString(r.FormValue("state"))
-	if err != nil {
-		return nil, httputil.NewError(http.StatusBadRequest, fmt.Errorf("bad bytes: %w", err))
-	}
-
-	// split state into concat'd components
-	// (nonce|timestamp|redirect_url|encrypted_data(redirect_url)+mac(nonce,ts))
-	statePayload := strings.SplitN(string(bytes), "|", 3)
-	if len(statePayload) != 3 {
-		return nil, httputil.NewError(http.StatusBadRequest, fmt.Errorf("state malformed, size: %d", len(statePayload)))
-	}
-
-	// verify that the returned timestamp is valid
-	if err := cryptutil.ValidTimestamp(statePayload[1]); err != nil {
-		return nil, httputil.NewError(http.StatusBadRequest, err)
-	}
-
-	// Use our AEAD construct to enforce secrecy and authenticity:
-	// mac: to validate the nonce again, and above timestamp
-	// decrypt: to prevent leaking 'redirect_uri' to IdP or logs
-	b := []byte(fmt.Sprint(statePayload[0], "|", statePayload[1], "|"))
-	redirectString, err := cryptutil.Decrypt(state.cookieCipher, []byte(statePayload[2]), b)
+	oauthState, err := oauth.DecodeState(state.cookieCipher, r.FormValue("state"))
 	if err != nil {
 		return nil, httputil.NewError(http.StatusBadRequest, err)
 	}
 
-	redirectURL, err := urlutil.ParseAndValidateURL(string(redirectString))
+	redirectURL, err := urlutil.ParseAndValidateURL(oauthState.RedirectURL)
 	if err != nil {
 		return nil, httputil.NewError(http.StatusBadRequest, err)
 	}

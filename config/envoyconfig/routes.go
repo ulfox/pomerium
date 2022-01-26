@@ -3,8 +3,10 @@ package envoyconfig
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
+	"strconv"
 
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	envoy_config_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/pomerium/pomerium/config"
 	"github.com/pomerium/pomerium/internal/httputil"
+	"github.com/pomerium/pomerium/internal/identity/oauth"
 	"github.com/pomerium/pomerium/internal/urlutil"
 )
 
@@ -268,6 +271,14 @@ func (b *Builder) buildPolicyRoutes(options *config.Options, domain string) ([]*
 			continue
 		}
 
+		if policy.OAuthRedirectURL != "" {
+			oauthRedirectURLRoute, err := b.buildOAuthRedirectURLRoute(options, policy.OAuthRedirectURL)
+			if err != nil {
+				return nil, err
+			}
+			routes = append(routes, oauthRedirectURLRoute)
+		}
+
 		match := mkRouteMatch(&policy)
 		envoyRoute := &envoy_config_route_v3.Route{
 			Name:                   fmt.Sprintf("policy-%d", i),
@@ -444,6 +455,69 @@ func (b *Builder) buildPolicyRouteRouteAction(options *config.Options, policy *c
 	setHostRewriteOptions(policy, action)
 
 	return action, nil
+}
+
+func (b *Builder) buildOAuthRedirectURLRoute(options *config.Options, rawOAuthRedirectURL string) (*envoy_config_route_v3.Route, error) {
+	oauthRedirectURL, err := urlutil.ParseAndValidateURL(rawOAuthRedirectURL)
+	if err != nil {
+		return nil, err
+	}
+
+	envoyRedirect, err := b.buildAuthenticateCallbackRouteRedirectAction(options)
+	if err != nil {
+		return nil, err
+	}
+
+	envoyRoute := &envoy_config_route_v3.Route{
+		Action: &envoy_config_route_v3.Route_Redirect{
+			Redirect: envoyRedirect,
+		},
+		Match: &envoy_config_route_v3.RouteMatch{
+			PathSpecifier: &envoy_config_route_v3.RouteMatch_Path{
+				Path: oauthRedirectURL.Path,
+			},
+			QueryParameters: []*envoy_config_route_v3.QueryParameterMatcher{
+				{Name: "state", QueryParameterMatchSpecifier: &envoy_config_route_v3.QueryParameterMatcher_StringMatch{
+					StringMatch: &envoy_type_matcher_v3.StringMatcher{
+						MatchPattern: &envoy_type_matcher_v3.StringMatcher_Prefix{
+							Prefix: oauth.StatePrefix,
+						},
+					},
+				}},
+			},
+		},
+		TypedPerFilterConfig: map[string]*any.Any{
+			"envoy.filters.http.ext_authz": disableExtAuthz,
+		},
+	}
+	return envoyRoute, nil
+}
+
+func (b *Builder) buildAuthenticateCallbackRouteRedirectAction(options *config.Options) (*envoy_config_route_v3.RedirectAction, error) {
+	authenticateURL, err := options.GetAuthenticateURL()
+	if err != nil {
+		return nil, err
+	}
+
+	authenticateURL = authenticateURL.ResolveReference(&url.URL{
+		Path: options.AuthenticateCallbackPath,
+	})
+
+	redirect := &envoy_config_route_v3.RedirectAction{}
+	if host, rawPort, err := net.SplitHostPort(authenticateURL.Host); err == nil {
+		if port, err := strconv.ParseUint(rawPort, 10, 32); err == nil {
+			redirect.HostRedirect = host
+			redirect.PortRedirect = uint32(port)
+		} else {
+			return nil, fmt.Errorf("invalid port in authenticate URL")
+		}
+	}
+	redirect.PathRewriteSpecifier = &envoy_config_route_v3.RedirectAction_PathRedirect{
+		PathRedirect: authenticateURL.Path,
+	}
+	redirect.ResponseCode = envoy_config_route_v3.RedirectAction_FOUND
+
+	return redirect, nil
 }
 
 func mkEnvoyHeader(k, v string) *envoy_config_core_v3.HeaderValueOption {

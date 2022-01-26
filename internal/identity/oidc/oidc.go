@@ -73,7 +73,7 @@ func New(ctx context.Context, o *oauth.Options, options ...Option) (*Provider, e
 				ClientSecret: o.ClientSecret,
 				Scopes:       o.Scopes,
 				Endpoint:     provider.Endpoint(),
-				RedirectURL:  o.RedirectURL.String(),
+				RedirectURL:  o.RedirectURL,
 			}
 		}),
 		WithGetProvider(func() (*go_oidc.Provider, error) {
@@ -103,11 +103,12 @@ func New(ctx context.Context, o *oauth.Options, options ...Option) (*Provider, e
 // always provide a non-empty string and validate that it matches the
 // the state query parameter on your redirect callback.
 // See http://tools.ietf.org/html/rfc6749#section-10.12 for more info.
-func (p *Provider) GetSignInURL(state string) (string, error) {
+func (p *Provider) GetSignInURL(state, redirectURL string) (string, error) {
 	oa, err := p.GetOauthConfig()
 	if err != nil {
 		return "", err
 	}
+	oa.RedirectURL = redirectURL
 
 	opts := defaultAuthCodeOptions
 	for k, v := range p.AuthCodeOptions {

@@ -10,6 +10,7 @@ const (
 	QueryEnrollmentToken    = "pomerium_enrollment_token" //nolint
 	QueryIsProgrammatic     = "pomerium_programmatic"
 	QueryForwardAuth        = "pomerium_forward_auth"
+	QueryOAuthRedirectURI   = "pomerium_oauth_redirect_uri"
 	QueryPomeriumJWT        = "pomerium_jwt"
 	QuerySession            = "pomerium_session"
 	QuerySessionEncrypted   = "pomerium_session_encrypted"

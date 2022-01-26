@@ -108,7 +108,7 @@ func (a *Authenticate) updateProvider(cfg *config.Config) error {
 	// configure our identity provider
 	provider, err := identity.NewAuthenticator(
 		oauth.Options{
-			RedirectURL:     redirectURL,
+			RedirectURL:     redirectURL.String(),
 			ProviderName:    cfg.Options.Provider,
 			ProviderURL:     cfg.Options.ProviderURL,
 			ClientID:        cfg.Options.ClientID,
