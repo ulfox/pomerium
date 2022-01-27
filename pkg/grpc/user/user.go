@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/pkg/grpc/databroker"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 	"github.com/pomerium/pomerium/pkg/protoutil"
 )
 
@@ -66,7 +66,7 @@ func PutServiceAccount(ctx context.Context, client databroker.DataBrokerServiceC
 }
 
 // AddClaims adds the flattened claims to the user.
-func (x *User) AddClaims(claims identity.FlattenedClaims) {
+func (x *User) AddClaims(claims session.FlattenedClaims) {
 	if x.Claims == nil {
 		x.Claims = make(map[string]*structpb.ListValue)
 	}

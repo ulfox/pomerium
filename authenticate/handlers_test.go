@@ -176,11 +176,9 @@ func TestAuthenticate_SignIn(t *testing.T) {
 					directoryClient: new(mockDirectoryServiceClient),
 				}),
 
-				options:  config.NewAtomicOptions(),
-				provider: identity.NewAtomicAuthenticator(),
+				options: config.NewAtomicOptions(),
 			}
 			a.options.Store(&config.Options{SharedKey: base64.StdEncoding.EncodeToString(cryptutil.NewKey())})
-			a.provider.Store(tt.provider)
 			uri := &url.URL{Scheme: tt.scheme, Host: tt.host}
 
 			queryString := uri.Query()

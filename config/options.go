@@ -27,13 +27,13 @@ import (
 	"github.com/pomerium/pomerium/internal/directory/okta"
 	"github.com/pomerium/pomerium/internal/directory/onelogin"
 	"github.com/pomerium/pomerium/internal/hashutil"
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/telemetry"
 	"github.com/pomerium/pomerium/internal/telemetry/metrics"
 	"github.com/pomerium/pomerium/internal/urlutil"
 	"github.com/pomerium/pomerium/pkg/cryptutil"
 	"github.com/pomerium/pomerium/pkg/grpc/config"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 // DisableHeaderKey is the key used to check whether to disable setting header
@@ -889,23 +889,24 @@ func (o *Options) GetMetricsCertificate() (*tls.Certificate, error) {
 	return nil, nil
 }
 
-// GetOauthOptions gets the oauth.Options for the given config options.
-func (o *Options) GetOauthOptions() (oauth.Options, error) {
+// GetOAuthConfig gets the oauth config for the given options.
+func (o *Options) GetOAuthConfig() (*session.OAuthConfig, error) {
 	redirectURL, err := o.GetAuthenticateURL()
 	if err != nil {
-		return oauth.Options{}, err
+		return nil, err
 	}
 	redirectURL = redirectURL.ResolveReference(&url.URL{
 		Path: o.AuthenticateCallbackPath,
 	})
-	return oauth.Options{
-		RedirectURL:    redirectURL,
-		ProviderName:   o.Provider,
-		ProviderURL:    o.ProviderURL,
-		ClientID:       o.ClientID,
-		ClientSecret:   o.ClientSecret,
-		Scopes:         o.Scopes,
-		ServiceAccount: o.ServiceAccount,
+	return &session.OAuthConfig{
+		ProviderName:    o.Provider,
+		ProviderUrl:     o.ProviderURL,
+		ClientId:        o.ClientID,
+		ClientSecret:    o.ClientSecret,
+		RedirectUrl:     redirectURL.String(),
+		Scopes:          o.Scopes,
+		ServiceAccount:  o.ServiceAccount,
+		AuthCodeOptions: o.RequestParams,
 	}, nil
 }
 

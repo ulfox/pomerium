@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	pom_oidc "github.com/pomerium/pomerium/internal/identity/oidc"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 const (
@@ -22,10 +22,10 @@ type Provider struct {
 }
 
 // New instantiates an OpenID Connect (OIDC) provider for Okta.
-func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
+func New(ctx context.Context, cfg *session.OAuthConfig) (*Provider, error) {
 	var p Provider
 	var err error
-	genericOidc, err := pom_oidc.New(ctx, o)
+	genericOidc, err := pom_oidc.New(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: failed creating oidc provider: %w", Name, err)
 	}

@@ -16,7 +16,6 @@ import (
 	"github.com/pomerium/pomerium/config"
 	"github.com/pomerium/pomerium/internal/directory"
 	"github.com/pomerium/pomerium/internal/envoy/files"
-	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/internal/identity/manager"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/telemetry"
@@ -146,16 +145,6 @@ func (c *DataBroker) update(cfg *config.Config) error {
 		return fmt.Errorf("databroker: bad option: %w", err)
 	}
 
-	oauthOptions, err := cfg.Options.GetOauthOptions()
-	if err != nil {
-		return fmt.Errorf("databroker: invalid oauth options: %w", err)
-	}
-
-	authenticator, err := identity.NewAuthenticator(oauthOptions)
-	if err != nil {
-		return fmt.Errorf("databroker: failed to create authenticator: %w", err)
-	}
-
 	directoryProvider := directory.GetProvider(directory.Options{
 		ServiceAccount: cfg.Options.ServiceAccount,
 		Provider:       cfg.Options.Provider,
@@ -171,7 +160,6 @@ func (c *DataBroker) update(cfg *config.Config) error {
 	dataBrokerClient := databroker.NewDataBrokerServiceClient(c.localGRPCConnection)
 
 	options := []manager.Option{
-		manager.WithAuthenticator(authenticator),
 		manager.WithDirectoryProvider(directoryProvider),
 		manager.WithDataBrokerClient(dataBrokerClient),
 		manager.WithGroupRefreshInterval(cfg.Options.RefreshDirectoryInterval),

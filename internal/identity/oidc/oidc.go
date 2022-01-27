@@ -14,12 +14,13 @@ import (
 
 	go_oidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/pomerium/pomerium/internal/httputil"
 	"github.com/pomerium/pomerium/internal/identity/identity"
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	"github.com/pomerium/pomerium/internal/urlutil"
 	"github.com/pomerium/pomerium/internal/version"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 // Name identifies the generic OpenID Connect provider.
@@ -53,33 +54,34 @@ type Provider struct {
 }
 
 // New creates a new instance of a generic OpenID Connect provider.
-func New(ctx context.Context, o *oauth.Options, options ...Option) (*Provider, error) {
-	if o.ProviderURL == "" {
+func New(ctx context.Context, cfg *session.OAuthConfig, options ...Option) (*Provider, error) {
+	if cfg.GetProviderUrl() == "" {
 		return nil, ErrMissingProviderURL
 	}
 
 	p := new(Provider)
-	if len(o.Scopes) == 0 {
-		o.Scopes = defaultScopes
+	if len(cfg.GetScopes()) == 0 {
+		cfg = proto.Clone(cfg).(*session.OAuthConfig)
+		cfg.Scopes = defaultScopes
 	}
-	if len(o.AuthCodeOptions) != 0 {
-		p.AuthCodeOptions = o.AuthCodeOptions
+	if len(cfg.GetAuthCodeOptions()) != 0 {
+		p.AuthCodeOptions = cfg.GetAuthCodeOptions()
 	}
 
 	p.cfg = getConfig(append([]Option{
 		WithGetOauthConfig(func(provider *go_oidc.Provider) *oauth2.Config {
 			return &oauth2.Config{
-				ClientID:     o.ClientID,
-				ClientSecret: o.ClientSecret,
-				Scopes:       o.Scopes,
+				ClientID:     cfg.GetClientId(),
+				ClientSecret: cfg.GetClientSecret(),
+				Scopes:       cfg.GetScopes(),
 				Endpoint:     provider.Endpoint(),
-				RedirectURL:  o.RedirectURL.String(),
+				RedirectURL:  cfg.GetRedirectUrl(),
 			}
 		}),
 		WithGetProvider(func() (*go_oidc.Provider, error) {
-			pp, err := go_oidc.NewProvider(ctx, o.ProviderURL)
+			pp, err := go_oidc.NewProvider(ctx, cfg.GetProviderUrl())
 			if err != nil {
-				return nil, fmt.Errorf("identity/oidc: could not connect to %s: %w", o.ProviderName, err)
+				return nil, fmt.Errorf("identity/oidc: could not connect to %s: %w", cfg.GetProviderName(), err)
 			}
 
 			// add non-standard claims like end-session, revoke, and user info
@@ -90,7 +92,7 @@ func New(ctx context.Context, o *oauth.Options, options ...Option) (*Provider, e
 			return pp, nil
 		}),
 		WithGetVerifier(func(provider *go_oidc.Provider) *go_oidc.IDTokenVerifier {
-			return provider.Verifier(&go_oidc.Config{ClientID: o.ClientID})
+			return provider.Verifier(&go_oidc.Config{ClientID: cfg.GetClientId()})
 		}),
 	}, options...)...)
 	return p, nil

@@ -8,9 +8,10 @@ import (
 	"fmt"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	pom_oidc "github.com/pomerium/pomerium/internal/identity/oidc"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 // Name identifies the GitLab identity provider.
@@ -28,16 +29,18 @@ type Provider struct {
 }
 
 // New instantiates an OpenID Connect (OIDC) provider for Gitlab.
-func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
+func New(ctx context.Context, cfg *session.OAuthConfig) (*Provider, error) {
 	var p Provider
 	var err error
-	if o.ProviderURL == "" {
-		o.ProviderURL = defaultProviderURL
+	if cfg.GetProviderUrl() == "" {
+		cfg = proto.Clone(cfg).(*session.OAuthConfig)
+		cfg.ProviderUrl = defaultProviderURL
 	}
-	if len(o.Scopes) == 0 {
-		o.Scopes = defaultScopes
+	if len(cfg.GetScopes()) == 0 {
+		cfg = proto.Clone(cfg).(*session.OAuthConfig)
+		cfg.Scopes = defaultScopes
 	}
-	genericOidc, err := pom_oidc.New(ctx, o)
+	genericOidc, err := pom_oidc.New(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: failed creating oidc provider: %w", Name, err)
 	}

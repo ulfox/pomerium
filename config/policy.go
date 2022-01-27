@@ -16,11 +16,11 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/pomerium/pomerium/internal/hashutil"
-	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/urlutil"
 	"github.com/pomerium/pomerium/pkg/cryptutil"
 	configpb "github.com/pomerium/pomerium/pkg/grpc/config"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 // Policy contains route specific configuration and access settings.
@@ -36,10 +36,10 @@ type Policy struct {
 	Redirect *PolicyRedirect `mapstructure:"redirect" yaml:"redirect"`
 
 	// Identity related policy
-	AllowedUsers     []string                 `mapstructure:"allowed_users" yaml:"allowed_users,omitempty" json:"allowed_users,omitempty"`
-	AllowedGroups    []string                 `mapstructure:"allowed_groups" yaml:"allowed_groups,omitempty" json:"allowed_groups,omitempty"`
-	AllowedDomains   []string                 `mapstructure:"allowed_domains" yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
-	AllowedIDPClaims identity.FlattenedClaims `mapstructure:"allowed_idp_claims" yaml:"allowed_idp_claims,omitempty" json:"allowed_idp_claims,omitempty"`
+	AllowedUsers     []string                `mapstructure:"allowed_users" yaml:"allowed_users,omitempty" json:"allowed_users,omitempty"`
+	AllowedGroups    []string                `mapstructure:"allowed_groups" yaml:"allowed_groups,omitempty" json:"allowed_groups,omitempty"`
+	AllowedDomains   []string                `mapstructure:"allowed_domains" yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
+	AllowedIDPClaims session.FlattenedClaims `mapstructure:"allowed_idp_claims" yaml:"allowed_idp_claims,omitempty" json:"allowed_idp_claims,omitempty"`
 
 	Source *StringURL `yaml:",omitempty" json:"source,omitempty" hash:"ignore"`
 
@@ -174,13 +174,13 @@ type RewriteHeader struct {
 
 // A SubPolicy is a protobuf Policy within a protobuf Route.
 type SubPolicy struct {
-	ID               string                   `mapstructure:"id" yaml:"id" json:"id"`
-	Name             string                   `mapstructure:"name" yaml:"name" json:"name"`
-	AllowedUsers     []string                 `mapstructure:"allowed_users" yaml:"allowed_users,omitempty" json:"allowed_users,omitempty"`
-	AllowedGroups    []string                 `mapstructure:"allowed_groups" yaml:"allowed_groups,omitempty" json:"allowed_groups,omitempty"`
-	AllowedDomains   []string                 `mapstructure:"allowed_domains" yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
-	AllowedIDPClaims identity.FlattenedClaims `mapstructure:"allowed_idp_claims" yaml:"allowed_idp_claims,omitempty" json:"allowed_idp_claims,omitempty"`
-	Rego             []string                 `mapstructure:"rego" yaml:"rego" json:"rego,omitempty"`
+	ID               string                  `mapstructure:"id" yaml:"id" json:"id"`
+	Name             string                  `mapstructure:"name" yaml:"name" json:"name"`
+	AllowedUsers     []string                `mapstructure:"allowed_users" yaml:"allowed_users,omitempty" json:"allowed_users,omitempty"`
+	AllowedGroups    []string                `mapstructure:"allowed_groups" yaml:"allowed_groups,omitempty" json:"allowed_groups,omitempty"`
+	AllowedDomains   []string                `mapstructure:"allowed_domains" yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
+	AllowedIDPClaims session.FlattenedClaims `mapstructure:"allowed_idp_claims" yaml:"allowed_idp_claims,omitempty" json:"allowed_idp_claims,omitempty"`
+	Rego             []string                `mapstructure:"rego" yaml:"rego" json:"rego,omitempty"`
 }
 
 // PolicyRedirect is a route redirect action.
@@ -213,7 +213,7 @@ func NewPolicyFromProto(pb *configpb.Route) (*Policy, error) {
 		AllowedUsers:                     pb.GetAllowedUsers(),
 		AllowedGroups:                    pb.GetAllowedGroups(),
 		AllowedDomains:                   pb.GetAllowedDomains(),
-		AllowedIDPClaims:                 identity.NewFlattenedClaimsFromPB(pb.GetAllowedIdpClaims()),
+		AllowedIDPClaims:                 session.NewFlattenedClaimsFromPB(pb.GetAllowedIdpClaims()),
 		Prefix:                           pb.GetPrefix(),
 		Path:                             pb.GetPath(),
 		Regex:                            pb.GetRegex(),
@@ -293,7 +293,7 @@ func NewPolicyFromProto(pb *configpb.Route) (*Policy, error) {
 			AllowedUsers:     sp.GetAllowedUsers(),
 			AllowedGroups:    sp.GetAllowedGroups(),
 			AllowedDomains:   sp.GetAllowedDomains(),
-			AllowedIDPClaims: identity.NewFlattenedClaimsFromPB(sp.GetAllowedIdpClaims()),
+			AllowedIDPClaims: session.NewFlattenedClaimsFromPB(sp.GetAllowedIdpClaims()),
 			Rego:             sp.GetRego(),
 		})
 	}
@@ -611,8 +611,8 @@ func (p *Policy) AllAllowedGroups() []string {
 }
 
 // AllAllowedIDPClaims returns all the allowed IDP claims.
-func (p *Policy) AllAllowedIDPClaims() []identity.FlattenedClaims {
-	var aics []identity.FlattenedClaims
+func (p *Policy) AllAllowedIDPClaims() []session.FlattenedClaims {
+	var aics []session.FlattenedClaims
 	if len(p.AllowedIDPClaims) > 0 {
 		aics = append(aics, p.AllowedIDPClaims)
 	}

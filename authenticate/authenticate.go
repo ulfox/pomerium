@@ -11,8 +11,6 @@ import (
 
 	"github.com/pomerium/pomerium/config"
 	"github.com/pomerium/pomerium/internal/frontend"
-	"github.com/pomerium/pomerium/internal/identity"
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/urlutil"
 	"github.com/pomerium/pomerium/pkg/cryptutil"
@@ -51,9 +49,8 @@ func ValidateOptions(o *config.Options) error {
 type Authenticate struct {
 	templates *template.Template
 
-	options  *config.AtomicOptions
-	provider *identity.AtomicAuthenticator
-	state    *atomicAuthenticateState
+	options *config.AtomicOptions
+	state   *atomicAuthenticateState
 }
 
 // New validates and creates a new authenticate service from a set of Options.
@@ -61,7 +58,6 @@ func New(cfg *config.Config) (*Authenticate, error) {
 	a := &Authenticate{
 		templates: template.Must(frontend.NewTemplates()),
 		options:   config.NewAtomicOptions(),
-		provider:  identity.NewAtomicAuthenticator(),
 		state:     newAtomicAuthenticateState(newAuthenticateState()),
 	}
 
@@ -104,23 +100,6 @@ func (a *Authenticate) updateProvider(cfg *config.Config) error {
 
 	redirectURL, _ := urlutil.DeepCopy(u)
 	redirectURL.Path = cfg.Options.AuthenticateCallbackPath
-
-	// configure our identity provider
-	provider, err := identity.NewAuthenticator(
-		oauth.Options{
-			RedirectURL:     redirectURL,
-			ProviderName:    cfg.Options.Provider,
-			ProviderURL:     cfg.Options.ProviderURL,
-			ClientID:        cfg.Options.ClientID,
-			ClientSecret:    cfg.Options.ClientSecret,
-			Scopes:          cfg.Options.Scopes,
-			ServiceAccount:  cfg.Options.ServiceAccount,
-			AuthCodeOptions: cfg.Options.RequestParams,
-		})
-	if err != nil {
-		return err
-	}
-	a.provider.Store(provider)
 
 	return nil
 }

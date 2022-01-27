@@ -7,7 +7,6 @@ import (
 	"github.com/golang/protobuf/ptypes"
 	"github.com/google/btree"
 
-	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/pkg/grpc/session"
 	"github.com/pomerium/pomerium/pkg/grpc/user"
 )
@@ -45,7 +44,7 @@ func (u *User) UnmarshalJSON(data []byte) error {
 		delete(raw, "email")
 	}
 
-	u.AddClaims(identity.NewClaimsFromRaw(raw).Flatten())
+	u.AddClaims(session.NewClaimsFromRaw(raw).Flatten())
 
 	return nil
 }
@@ -131,7 +130,7 @@ func (s *Session) UnmarshalJSON(data []byte) error {
 		delete(raw, "iat")
 	}
 
-	s.AddClaims(identity.NewClaimsFromRaw(raw).Flatten())
+	s.AddClaims(session.NewClaimsFromRaw(raw).Flatten())
 
 	return nil
 }

@@ -14,8 +14,8 @@ import (
 	go_oidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	pom_oidc "github.com/pomerium/pomerium/internal/identity/oidc"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 // Name identifies the Azure identity provider
@@ -40,19 +40,20 @@ type Provider struct {
 }
 
 // New instantiates an OpenID Connect (OIDC) provider for Azure.
-func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
+func New(ctx context.Context, cfg *session.OAuthConfig) (*Provider, error) {
 	var p Provider
 	var err error
-	if o.ProviderURL == "" {
-		o.ProviderURL = defaultProviderURL
+	if cfg.GetProviderUrl() == "" {
+		cfg = cfg.Clone()
+		cfg.ProviderUrl = defaultProviderURL
 	}
-	genericOidc, err := newProvider(ctx, o,
+	genericOidc, err := newProvider(ctx, cfg,
 		pom_oidc.WithGetVerifier(func(provider *go_oidc.Provider) *go_oidc.IDTokenVerifier {
 			return provider.Verifier(&go_oidc.Config{
-				ClientID: o.ClientID,
+				ClientID: cfg.GetClientId(),
 				// If using the common endpoint, the verification provider URI will not match.
 				// https://github.com/pomerium/pomerium/issues/1605
-				SkipIssuerCheck: o.ProviderURL == defaultProviderURL,
+				SkipIssuerCheck: cfg.GetProviderUrl() == defaultProviderURL,
 			})
 		}))
 	if err != nil {
@@ -61,8 +62,8 @@ func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
 	p.Provider = genericOidc
 
 	p.AuthCodeOptions = defaultAuthCodeOptions
-	if len(o.AuthCodeOptions) != 0 {
-		p.AuthCodeOptions = o.AuthCodeOptions
+	if len(cfg.GetAuthCodeOptions()) != 0 {
+		p.AuthCodeOptions = cfg.GetAuthCodeOptions()
 	}
 
 	return &p, nil
@@ -80,7 +81,7 @@ func (p *Provider) Name() string {
 // If {tenantid} is in the issuer string, we force the issuer to match the defaultURL.
 //
 // https://github.com/pomerium/pomerium/issues/1605
-func newProvider(ctx context.Context, o *oauth.Options, options ...pom_oidc.Option) (*pom_oidc.Provider, error) {
+func newProvider(ctx context.Context, cfg *session.OAuthConfig, options ...pom_oidc.Option) (*pom_oidc.Provider, error) {
 	originalClient := http.DefaultClient
 	if c, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok {
 		originalClient = c
@@ -91,7 +92,7 @@ func newProvider(ctx context.Context, o *oauth.Options, options ...pom_oidc.Opti
 	client.Transport = &wellKnownConfiguration{underlying: client.Transport}
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
-	return pom_oidc.New(ctx, o, options...)
+	return pom_oidc.New(ctx, cfg, options...)
 }
 
 type wellKnownConfiguration struct {

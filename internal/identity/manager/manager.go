@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/pomerium/pomerium/internal/directory"
-	"github.com/pomerium/pomerium/internal/identity/identity"
+	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/scheduler"
 	"github.com/pomerium/pomerium/internal/telemetry/metrics"
@@ -404,7 +404,7 @@ func (mgr *Manager) refreshSession(ctx context.Context, userID, sessionID string
 		return
 	}
 
-	newToken, err := mgr.cfg.Load().authenticator.Refresh(ctx, FromOAuthToken(s.OauthToken), &s)
+	newToken, err := identity.Refresh(ctx, s.GetOauthConfig(), FromOAuthToken(s.OauthToken), &s)
 	metrics.RecordIdentityManagerSessionRefresh(ctx, err)
 	if isTemporaryError(err) {
 		log.Error(ctx).Err(err).
@@ -422,7 +422,7 @@ func (mgr *Manager) refreshSession(ctx context.Context, userID, sessionID string
 	}
 	s.OauthToken = ToOAuthToken(newToken)
 
-	err = mgr.cfg.Load().authenticator.UpdateUserInfo(ctx, FromOAuthToken(s.OauthToken), &s)
+	err = identity.UpdateUserInfo(ctx, s.GetOauthConfig(), FromOAuthToken(s.OauthToken), &s)
 	if isTemporaryError(err) {
 		log.Error(ctx).Err(err).
 			Str("user_id", s.GetUserId()).
@@ -473,7 +473,7 @@ func (mgr *Manager) refreshUser(ctx context.Context, userID string) {
 			continue
 		}
 
-		err := mgr.cfg.Load().authenticator.UpdateUserInfo(ctx, FromOAuthToken(s.OauthToken), &u)
+		err := identity.UpdateUserInfo(ctx, s.OauthConfig, FromOAuthToken(s.OauthToken), &u)
 		metrics.RecordIdentityManagerUserRefresh(ctx, err)
 		if isTemporaryError(err) {
 			log.Error(ctx).Err(err).

@@ -5,10 +5,10 @@ import (
 	context "context"
 	"fmt"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/pomerium/pomerium/internal/identity"
 	"github.com/pomerium/pomerium/pkg/grpc/databroker"
 	"github.com/pomerium/pomerium/pkg/protoutil"
 )
@@ -60,7 +60,7 @@ func Put(ctx context.Context, client databroker.DataBrokerServiceClient, s *Sess
 }
 
 // AddClaims adds the flattened claims to the session.
-func (x *Session) AddClaims(claims identity.FlattenedClaims) {
+func (x *Session) AddClaims(claims FlattenedClaims) {
 	if x.Claims == nil {
 		x.Claims = make(map[string]*structpb.ListValue)
 	}
@@ -75,4 +75,8 @@ func (x *Session) SetRawIDToken(rawIDToken string) {
 		x.IdToken = new(IDToken)
 	}
 	x.IdToken.Raw = rawIDToken
+}
+
+func (cfg *OAuthConfig) Clone() *OAuthConfig {
+	return proto.Clone(cfg).(*OAuthConfig)
 }

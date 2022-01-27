@@ -18,11 +18,11 @@ import (
 
 	"github.com/pomerium/pomerium/internal/httputil"
 	"github.com/pomerium/pomerium/internal/identity/identity"
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	"github.com/pomerium/pomerium/internal/identity/oidc"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/internal/urlutil"
 	"github.com/pomerium/pomerium/internal/version"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 // Name identifies the GitHub identity provider
@@ -56,32 +56,34 @@ type Provider struct {
 }
 
 // New instantiates an OAuth2 provider for Github.
-func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
+func New(ctx context.Context, cfg *session.OAuthConfig) (*Provider, error) {
 	p := Provider{}
-	if o.ProviderURL == "" {
-		o.ProviderURL = defaultProviderURL
+	if cfg.GetProviderUrl() == "" {
+		cfg = cfg.Clone()
+		cfg.ProviderUrl = defaultProviderURL
 	}
 
 	// when the default provider url is used, use the Github API endpoint
-	if o.ProviderURL == defaultProviderURL {
+	if cfg.GetProviderUrl() == defaultProviderURL {
 		p.userEndpoint = urlutil.Join(githubAPIURL, userPath)
 		p.emailEndpoint = urlutil.Join(githubAPIURL, emailPath)
 	} else {
-		p.userEndpoint = urlutil.Join(o.ProviderURL, userPath)
-		p.emailEndpoint = urlutil.Join(o.ProviderURL, emailPath)
+		p.userEndpoint = urlutil.Join(cfg.GetProviderUrl(), userPath)
+		p.emailEndpoint = urlutil.Join(cfg.GetProviderUrl(), emailPath)
 	}
 
-	if len(o.Scopes) == 0 {
-		o.Scopes = defaultScopes
+	if len(cfg.GetScopes()) == 0 {
+		cfg = cfg.Clone()
+		cfg.Scopes = defaultScopes
 	}
 	p.Oauth = &oauth2.Config{
-		ClientID:     o.ClientID,
-		ClientSecret: o.ClientSecret,
-		Scopes:       o.Scopes,
-		RedirectURL:  o.RedirectURL.String(),
+		ClientID:     cfg.GetClientId(),
+		ClientSecret: cfg.GetClientSecret(),
+		Scopes:       cfg.GetScopes(),
+		RedirectURL:  cfg.GetRedirectUrl(),
 		Endpoint: oauth2.Endpoint{
-			AuthURL:  urlutil.Join(o.ProviderURL, authURL),
-			TokenURL: urlutil.Join(o.ProviderURL, tokenURL),
+			AuthURL:  urlutil.Join(cfg.GetProviderUrl(), authURL),
+			TokenURL: urlutil.Join(cfg.GetProviderUrl(), tokenURL),
 		},
 	}
 	return &p, nil

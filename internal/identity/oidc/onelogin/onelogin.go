@@ -10,8 +10,8 @@ import (
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 
-	"github.com/pomerium/pomerium/internal/identity/oauth"
 	pom_oidc "github.com/pomerium/pomerium/internal/identity/oidc"
+	"github.com/pomerium/pomerium/pkg/grpc/session"
 )
 
 const (
@@ -32,18 +32,21 @@ type Provider struct {
 }
 
 // New instantiates an OpenID Connect (OIDC) provider for OneLogin.
-func New(ctx context.Context, o *oauth.Options) (*Provider, error) {
+func New(ctx context.Context, cfg *session.OAuthConfig) (*Provider, error) {
 	var p Provider
 	var err error
-	if o.ProviderURL == "" {
-		o.ProviderURL = defaultProviderURL
+	if cfg.GetProviderUrl() == "" {
+		cfg = cfg.Clone()
+		cfg.ProviderUrl = defaultProviderURL
 	}
-	if strings.Contains(o.ProviderURL, "/oidc/2") {
-		o.Scopes = defaultV2Scopes
+	if strings.Contains(cfg.GetProviderUrl(), "/oidc/2") {
+		cfg = cfg.Clone()
+		cfg.Scopes = defaultV2Scopes
 	} else {
-		o.Scopes = defaultV1Scopes
+		cfg = cfg.Clone()
+		cfg.Scopes = defaultV1Scopes
 	}
-	genericOidc, err := pom_oidc.New(ctx, o)
+	genericOidc, err := pom_oidc.New(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: failed creating oidc provider: %w", Name, err)
 	}

@@ -16,7 +16,6 @@ var (
 )
 
 type config struct {
-	authenticator                 Authenticator
 	directory                     directory.Provider
 	dataBrokerClient              databroker.DataBrokerServiceClient
 	groupRefreshInterval          time.Duration
@@ -41,13 +40,6 @@ func newConfig(options ...Option) *config {
 
 // An Option customizes the configuration used for the identity manager.
 type Option func(*config)
-
-// WithAuthenticator sets the authenticator in the config.
-func WithAuthenticator(authenticator Authenticator) Option {
-	return func(cfg *config) {
-		cfg.authenticator = authenticator
-	}
-}
 
 // WithDirectoryProvider sets the directory provider in the config.
 func WithDirectoryProvider(directoryProvider directory.Provider) Option {
