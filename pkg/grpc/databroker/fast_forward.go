@@ -40,7 +40,7 @@ func (ff *fastForwardHandler) update(ctx context.Context, c *ffCmd) {
 
 	now := time.Now()
 	ff.handler.UpdateRecords(ctx, c.serverVersion, c.records)
-	log.Info(ctx).
+	log.Sampled().Info().
 		Dur("elapsed", time.Since(now)).
 		Uint64("server_version", c.serverVersion).
 		Uints64("versions", versions).

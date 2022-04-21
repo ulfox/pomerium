@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/zerolog"
 	"go.uber.org/zap"
@@ -13,6 +14,7 @@ import (
 )
 
 var (
+	sampled   atomic.Value
 	logger    atomic.Value
 	zapLogger atomic.Value
 	zapLevel  zap.AtomicLevel
@@ -51,6 +53,10 @@ func EnableDebug() {
 // SetLogger sets zerolog the logger.
 func SetLogger(l *zerolog.Logger) {
 	logger.Store(l)
+	sampled.Store(l.Sample(&zerolog.BurstSampler{
+		Burst:  60,
+		Period: time.Minute,
+	}))
 }
 
 // Logger returns the global logger.
@@ -61,6 +67,11 @@ func Logger() *zerolog.Logger {
 // ZapLogger returns the global zap logger.
 func ZapLogger() *zap.Logger {
 	return zapLogger.Load().(*zap.Logger)
+}
+
+// Sampled returns the global sampled logger.
+func Sampled() *zerolog.Logger {
+	return sampled.Load().(*zerolog.Logger)
 }
 
 // SetLevel sets the minimum global log level. Options are 'debug' 'info' 'warn' and 'error'.

@@ -104,7 +104,7 @@ func (srv *Server) AcquireLease(ctx context.Context, req *databroker.AcquireLeas
 func (srv *Server) Get(ctx context.Context, req *databroker.GetRequest) (*databroker.GetResponse, error) {
 	_, span := trace.StartSpan(ctx, "databroker.grpc.Get")
 	defer span.End()
-	log.Info(ctx).
+	log.Sampled().Info().
 		Str("type", req.GetType()).
 		Str("id", req.GetId()).
 		Msg("get")
@@ -174,7 +174,7 @@ func (srv *Server) Put(ctx context.Context, req *databroker.PutRequest) (*databr
 	defer span.End()
 	record := req.GetRecord()
 
-	log.Info(ctx).
+	log.Sampled().Info().
 		Str("type", record.GetType()).
 		Str("id", record.GetId()).
 		Msg("put")
