@@ -54,8 +54,8 @@ func EnableDebug() {
 func SetLogger(l *zerolog.Logger) {
 	logger.Store(l)
 	sl := l.Sample(&zerolog.BurstSampler{
-		Burst:  60,
-		Period: time.Minute,
+		Burst:  3,
+		Period: time.Second * 3,
 	})
 	sampled.Store(&sl)
 }
