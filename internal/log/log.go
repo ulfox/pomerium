@@ -53,10 +53,11 @@ func EnableDebug() {
 // SetLogger sets zerolog the logger.
 func SetLogger(l *zerolog.Logger) {
 	logger.Store(l)
-	sampled.Store(l.Sample(&zerolog.BurstSampler{
+	sl := l.Sample(&zerolog.BurstSampler{
 		Burst:  60,
 		Period: time.Minute,
-	}))
+	})
+	sampled.Store(&sl)
 }
 
 // Logger returns the global logger.
