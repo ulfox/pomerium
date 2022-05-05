@@ -118,3 +118,31 @@ func RecordListToStream(ctx context.Context, records []*databroker.Record) Recor
 		},
 	}, nil)
 }
+
+// DedupedRecordStreamGenerator creates a RecordStreamGenerator that removes duplicates.
+func DedupedRecordStreamGenerator(generators ...RecordStreamGenerator) RecordStreamGenerator {
+	type key [2]string
+	seen := map[key]struct{}{}
+	return func(ctx context.Context, block bool) (*databroker.Record, error) {
+		for {
+			if len(generators) == 0 {
+				return nil, ErrStreamDone
+			}
+
+			record, err := generators[0](ctx, block)
+			if errors.Is(err, ErrStreamDone) {
+				generators = generators[1:]
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+
+			if _, ok := seen[key{record.GetType(), record.GetId()}]; ok {
+				continue
+			}
+			seen[key{record.GetType(), record.GetId()}] = struct{}{}
+
+			return record, nil
+		}
+	}
+}

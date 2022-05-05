@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/pomerium/pomerium/authorize/evaluator"
 	"github.com/pomerium/pomerium/authorize/internal/store"
 	"github.com/pomerium/pomerium/config"
@@ -59,9 +61,16 @@ func (a *Authorize) GetDataBrokerServiceClient() databroker.DataBrokerServiceCli
 
 // Run runs the authorize service.
 func (a *Authorize) Run(ctx context.Context) error {
-	go a.accessTracker.Run(ctx)
-	_ = grpc.WaitForReady(ctx, a.state.Load().dataBrokerClientConnection, time.Second*10)
-	return newDataBrokerSyncer(a).Run(ctx)
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		a.accessTracker.Run(ctx)
+		return nil
+	})
+	eg.Go(func() error {
+		_ = grpc.WaitForReady(ctx, a.state.Load().dataBrokerClientConnection, time.Second*10)
+		return nil
+	})
+	return eg.Wait()
 }
 
 // WaitForInitialSync blocks until the initial sync is complete.

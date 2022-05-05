@@ -16,12 +16,17 @@ import (
 	"github.com/pomerium/pomerium/internal/sessions"
 	"github.com/pomerium/pomerium/internal/telemetry/trace"
 	"github.com/pomerium/pomerium/internal/urlutil"
+	"github.com/pomerium/pomerium/pkg/grpc/databroker"
+	"github.com/pomerium/pomerium/pkg/grpc/user"
 )
 
 // Check implements the envoy auth server gRPC endpoint.
 func (a *Authorize) Check(ctx context.Context, in *envoy_service_auth_v3.CheckRequest) (out *envoy_service_auth_v3.CheckResponse, err error) {
 	ctx, span := trace.StartSpan(ctx, "authorize.grpc.Check")
 	defer span.End()
+
+	getter := databroker.NewTracingGetter(databroker.NewGetter(a.state.Load().dataBrokerClient))
+	ctx = databroker.WithGetter(ctx, getter)
 
 	// wait for the initial sync to complete so that data is available for evaluation
 	if err := a.WaitForInitialSync(ctx); err != nil {
@@ -48,10 +53,21 @@ func (a *Authorize) Check(ctx context.Context, in *envoy_service_auth_v3.CheckRe
 	rawJWT, _ := loadRawSession(hreq, a.currentOptions.Load(), state.encoder)
 	sessionState, _ := loadSession(state.encoder, rawJWT)
 
-	s, u, err := a.forceSync(ctx, sessionState)
-	if err != nil {
-		log.Warn(ctx).Err(err).Msg("clearing session due to force sync failed")
-		sessionState = nil
+	var s sessionOrServiceAccount
+	var u *user.User
+	if sessionState != nil {
+		s, err = a.getDataBrokerSessionOrServiceAccount(ctx, sessionState.ID)
+		if err != nil {
+			log.Warn(ctx).Err(err).Msg("clearing session due to force sync failed")
+			sessionState = nil
+		}
+	}
+	if s != nil {
+		u, err = a.getDataBrokerUser(ctx, s.GetUserId())
+		if err != nil {
+			log.Warn(ctx).Err(err).Msg("clearing session due to force sync failed")
+			sessionState = nil
+		}
 	}
 
 	req, err := a.getEvaluatorRequestFromCheckRequest(in, sessionState)

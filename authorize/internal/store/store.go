@@ -5,76 +5,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/go-jose/go-jose/v3"
-	"github.com/google/uuid"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/rego"
 	"github.com/open-policy-agent/opa/storage"
 	"github.com/open-policy-agent/opa/storage/inmem"
 	"github.com/open-policy-agent/opa/types"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/pomerium/pomerium/config"
 	"github.com/pomerium/pomerium/internal/log"
-	"github.com/pomerium/pomerium/pkg/cryptutil"
 	"github.com/pomerium/pomerium/pkg/grpc/databroker"
-	"github.com/pomerium/pomerium/pkg/protoutil"
 )
 
 // A Store stores data for the OPA rego policy evaluation.
 type Store struct {
 	storage.Store
-	index *index
-
-	dataBrokerServerVersion, dataBrokerRecordVersion uint64
 }
 
 // New creates a new Store.
 func New() *Store {
 	return &Store{
 		Store: inmem.New(),
-		index: newIndex(),
 	}
-}
-
-// NewFromProtos creates a new Store from an existing set of protobuf messages.
-func NewFromProtos(serverVersion uint64, msgs ...proto.Message) *Store {
-	s := New()
-	for _, msg := range msgs {
-		any := protoutil.NewAny(msg)
-		record := new(databroker.Record)
-		record.ModifiedAt = timestamppb.Now()
-		record.Version = cryptutil.NewRandomUInt64()
-		record.Id = uuid.New().String()
-		record.Data = any
-		record.Type = any.TypeUrl
-		if hasID, ok := msg.(interface{ GetId() string }); ok {
-			record.Id = hasID.GetId()
-		}
-
-		s.UpdateRecord(serverVersion, record)
-	}
-	return s
-}
-
-// ClearRecords removes all the records from the store.
-func (s *Store) ClearRecords() {
-	s.index.clear()
-}
-
-// GetDataBrokerVersions gets the databroker versions.
-func (s *Store) GetDataBrokerVersions() (serverVersion, recordVersion uint64) {
-	return atomic.LoadUint64(&s.dataBrokerServerVersion),
-		atomic.LoadUint64(&s.dataBrokerRecordVersion)
-}
-
-// GetRecordData gets a record's data from the store. `nil` is returned
-// if no record exists for the given type and id.
-func (s *Store) GetRecordData(typeURL, idOrValue string) proto.Message {
-	return s.index.find(typeURL, idOrValue)
 }
 
 // UpdateIssuer updates the issuer in the store. The issuer is used as part of JWT construction.
@@ -96,20 +50,6 @@ func (s *Store) UpdateJWTClaimHeaders(jwtClaimHeaders map[string]string) {
 // UpdateRoutePolicies updates the route policies in the store.
 func (s *Store) UpdateRoutePolicies(routePolicies []config.Policy) {
 	s.write("/route_policies", routePolicies)
-}
-
-// UpdateRecord updates a record in the store.
-func (s *Store) UpdateRecord(serverVersion uint64, record *databroker.Record) {
-	if record.GetDeletedAt() != nil {
-		s.index.delete(record.GetType(), record.GetId())
-	} else {
-		msg, _ := record.GetData().UnmarshalNew()
-		s.index.set(record.GetType(), record.GetId(), msg)
-	}
-	s.write("/databroker_server_version", fmt.Sprint(serverVersion))
-	s.write("/databroker_record_version", fmt.Sprint(record.GetVersion()))
-	atomic.StoreUint64(&s.dataBrokerServerVersion, serverVersion)
-	atomic.StoreUint64(&s.dataBrokerRecordVersion, record.GetVersion())
 }
 
 // UpdateSigningKey updates the signing key stored in the database. Signing operations
@@ -167,23 +107,34 @@ func (s *Store) GetDataBrokerRecordOption() func(*rego.Rego) {
 			return nil, fmt.Errorf("invalid record type: %T", op1)
 		}
 
-		recordID, ok := op2.Value.(ast.String)
+		value, ok := op2.Value.(ast.String)
 		if !ok {
 			return nil, fmt.Errorf("invalid record id: %T", op2)
 		}
 
-		msg := s.GetRecordData(string(recordType), string(recordID))
+		getter := databroker.GetGetter(bctx.Context)
+		res, err := getter.Get(bctx.Context, &databroker.GetRequest{
+			Type: string(recordType),
+			Id:   string(value),
+		})
+		if storage.IsNotFound(err) {
+			return ast.NullTerm(), nil
+		} else if err != nil {
+			return nil, err
+		}
+
+		msg, _ := res.GetRecord().GetData().UnmarshalNew()
 		if msg == nil {
 			return ast.NullTerm(), nil
 		}
 		obj := toMap(msg)
 
-		value, err := ast.InterfaceToValue(obj)
+		regoValue, err := ast.InterfaceToValue(obj)
 		if err != nil {
 			return nil, err
 		}
 
-		return ast.NewTerm(value), nil
+		return ast.NewTerm(regoValue), nil
 	})
 }
 

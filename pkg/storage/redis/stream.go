@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -63,6 +64,7 @@ func newSyncRecordStream(
 func newSyncLatestRecordStream(
 	ctx context.Context,
 	backend *Backend,
+	filter storage.FilterExpression,
 ) storage.RecordStream {
 	var recordVersion, cursor uint64
 	scannedOnce := false
@@ -107,6 +109,108 @@ func newSyncLatestRecordStream(
 			return nextChangedRecord(ctx, backend, &recordVersion)
 		},
 	}, nil)
+}
+
+func recordStreamGeneratorFromFilterExpression(
+	ctx context.Context,
+	backend *Backend,
+	expr storage.FilterExpression,
+) (storage.RecordStreamGenerator, error) {
+	if expr == nil {
+		return allRecordStreamGenerator(ctx, backend), nil
+	}
+
+	if and, ok := expr.(storage.AndFilterExpression); ok {
+		if len(and) == 0 {
+			return storage.DedupedRecordStreamGenerator(), nil
+		}
+		stream, err := recordStreamGeneratorFromFilterExpression(ctx, backend, and[0])
+		if err != nil {
+			return nil, err
+		}
+		for i := 1; i < len(and); i++ {
+			filter, err := storage.RecordStreamFilterFromFilterExpression(expr)
+			if err != nil {
+				return nil, err
+			}
+			stream = storage.FilteredRecordStreamGenerator(stream, filter)
+		}
+		return stream, nil
+	}
+
+	if or, ok := expr.(storage.OrFilterExpression); ok {
+		var generators []storage.RecordStreamGenerator
+		for _, expr := range or {
+			generator, err := recordStreamGeneratorFromFilterExpression(ctx, backend, expr)
+			if err != nil {
+				return nil, err
+			}
+			generators = append(generators, generator)
+		}
+		return storage.DedupedRecordStreamGenerator(generators...), nil
+	}
+
+	if equals, ok := expr.(storage.EqualsFilterExpression); ok {
+		switch strings.Join(equals.Fields, ".") {
+		case "id":
+			return byIDRecordStreamGenerator(ctx, backend, equals.Value), nil
+		case "$index":
+			panic("not implemented")
+		default:
+			return nil, fmt.Errorf("unsupported filter field: %s", strings.Join(equals.Fields, "."))
+		}
+	}
+
+	return nil, fmt.Errorf("unsupported filter: %T", expr)
+}
+
+func allRecordStreamGenerator(ctx context.Context, backend *Backend) storage.RecordStreamGenerator {
+	var cursor uint64
+	scannedOnce := false
+	var scannedRecords []*databroker.Record
+	return func(ctx context.Context, block bool) (*databroker.Record, error) {
+		for {
+			if len(scannedRecords) > 0 {
+				record := scannedRecords[0]
+				scannedRecords = scannedRecords[1:]
+				return record, nil
+			}
+
+			// the cursor is reset to 0 after iteration is complete
+			if scannedOnce && cursor == 0 {
+				return nil, storage.ErrStreamDone
+			}
+
+			var err error
+			scannedRecords, err = nextScannedRecords(ctx, backend, &cursor)
+			if err != nil {
+				return nil, err
+			}
+
+			scannedOnce = true
+		}
+	}
+}
+
+func byIDRecordStreamGenerator(ctx context.Context, backend *Backend, id string) storage.RecordStreamGenerator {
+	done := false
+	return func(ctx context.Context, block bool) (*databroker.Record, error) {
+		if done {
+			return nil, storage.ErrStreamDone
+		}
+
+		value, err := backend.client.HGet(ctx, recordHashKey, id).Result()
+		if errors.Is(err, redis.Nil) {
+			return nil, storage.ErrStreamDone
+		} else if err != nil {
+			return nil, err
+		}
+
+		done = true
+		var record databroker.Record
+		err = proto.Unmarshal([]byte(value), &record)
+		return &record, err
+	}
 }
 
 func nextScannedRecords(ctx context.Context, backend *Backend, cursor *uint64) ([]*databroker.Record, error) {
