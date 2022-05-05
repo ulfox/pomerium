@@ -151,7 +151,7 @@ func (srv *Server) Query(ctx context.Context, req *databroker.QueryRequest) (*da
 		return nil, err
 	}
 
-	_, stream, err := db.SyncLatest(ctx, expr)
+	serverVersion, recordVersion, stream, err := db.SyncLatest(ctx, req.GetType(), expr)
 	if err != nil {
 		return nil, err
 	}
@@ -160,10 +160,6 @@ func (srv *Server) Query(ctx context.Context, req *databroker.QueryRequest) (*da
 	var filtered []*databroker.Record
 	for stream.Next(false) {
 		record := stream.Record()
-
-		if record.GetType() != req.GetType() {
-			continue
-		}
 
 		if query != "" && !storage.MatchAny(record.GetData(), query) {
 			continue
@@ -177,8 +173,10 @@ func (srv *Server) Query(ctx context.Context, req *databroker.QueryRequest) (*da
 
 	records, totalCount := databroker.ApplyOffsetAndLimit(filtered, int(req.GetOffset()), int(req.GetLimit()))
 	return &databroker.QueryResponse{
-		Records:    records,
-		TotalCount: int64(totalCount),
+		Records:       records,
+		TotalCount:    int64(totalCount),
+		ServerVersion: serverVersion,
+		RecordVersion: recordVersion,
 	}, nil
 }
 
@@ -338,11 +336,10 @@ func (srv *Server) SyncLatest(req *databroker.SyncLatestRequest, stream databrok
 		return err
 	}
 
-	serverVersion, recordStream, err := backend.SyncLatest(ctx, nil)
+	serverVersion, recordVersion, recordStream, err := backend.SyncLatest(ctx, "", nil)
 	if err != nil {
 		return err
 	}
-	recordVersion := uint64(0)
 
 	for recordStream.Next(false) {
 		record := recordStream.Record()

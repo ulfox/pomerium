@@ -13,6 +13,9 @@ type FilterExpression interface {
 
 // FilterExpressionFromStruct creates a FilterExpression from a protobuf struct.
 func FilterExpressionFromStruct(s *structpb.Struct) (FilterExpression, error) {
+	if s == nil {
+		return nil, nil
+	}
 	return filterExpressionFromStruct(nil, s)
 }
 

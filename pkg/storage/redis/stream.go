@@ -21,49 +21,13 @@ func newSyncRecordStream(
 	serverVersion uint64,
 	recordVersion uint64,
 ) storage.RecordStream {
-	changed := backend.onChange.Bind()
-	return storage.NewRecordStream(ctx, backend.closed, []storage.RecordStreamGenerator{
-		// 1. stream all record changes
-		func(ctx context.Context, block bool) (*databroker.Record, error) {
-			ticker := time.NewTicker(watchPollInterval)
-			defer ticker.Stop()
-
-			for {
-				currentServerVersion, err := backend.getOrCreateServerVersion(ctx)
-				if err != nil {
-					return nil, err
-				}
-				if serverVersion != currentServerVersion {
-					return nil, storage.ErrInvalidServerVersion
-				}
-
-				record, err := nextChangedRecord(ctx, backend, &recordVersion)
-				if err == nil {
-					return record, nil
-				} else if !errors.Is(err, storage.ErrStreamDone) {
-					return nil, err
-				}
-
-				if !block {
-					return nil, storage.ErrStreamDone
-				}
-
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-ticker.C:
-				case <-changed:
-				}
-			}
-		},
-	}, func() {
-		backend.onChange.Unbind(changed)
-	})
+	return newChangedRecordStream(ctx, backend, recordVersion)
 }
 
 func newSyncLatestRecordStream(
 	ctx context.Context,
 	backend *Backend,
+	recordType string,
 	expr storage.FilterExpression,
 ) (storage.RecordStream, error) {
 	recordVersion, err := backend.client.Get(ctx, lastVersionKey).Uint64()
@@ -72,190 +36,308 @@ func newSyncLatestRecordStream(
 	} else if err != nil {
 		return nil, err
 	}
-
-	generator1, err := recordStreamGeneratorFromFilterExpression(ctx, backend, expr)
-	if err != nil {
-		return nil, err
-	}
-
 	filter, err := storage.RecordStreamFilterFromFilterExpression(expr)
 	if err != nil {
 		return nil, err
 	}
-	generator2 := storage.FilteredRecordStreamGenerator(
-		func(ctx context.Context, block bool) (*databroker.Record, error) {
-			return nextChangedRecord(ctx, backend, &recordVersion)
-		},
-		filter,
-	)
+	if recordType != "" {
+		filter = filter.And(func(record *databroker.Record) (keep bool) {
+			return record.GetType() == recordType
+		})
+	}
 
-	return storage.NewRecordStream(ctx, backend.closed, []storage.RecordStreamGenerator{
-		generator1, generator2,
-	}, nil), nil
+	// stream1 are all the records for the given type
+	stream1, err := newFilteredRecordStream(ctx, backend, recordType, expr, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// stream2 are any records which changed since we started streaming
+	stream2 := newChangedRecordStream(ctx, backend, recordVersion)
+	stream2 = storage.NewFilteredRecordStream(stream2, filter)
+
+	// stream is the concatenation of the two streams
+	stream := storage.NewConcatenatedRecordStream(stream1, stream2)
+	return stream, nil
 }
 
-func recordStreamGeneratorFromFilterExpression(
+func newFilteredRecordStream(
 	ctx context.Context,
 	backend *Backend,
+	recordType string,
 	expr storage.FilterExpression,
-) (storage.RecordStreamGenerator, error) {
-	if expr == nil {
-		return allRecordStreamGenerator(ctx, backend), nil
+	filter storage.RecordStreamFilter,
+) (storage.RecordStream, error) {
+	if and, ok := expr.(storage.AndFilterExpression); ok && len(and) > 0 {
+		return newFilteredRecordStream(ctx, backend, recordType, and[0], filter)
 	}
 
-	if and, ok := expr.(storage.AndFilterExpression); ok {
-		if len(and) == 0 {
-			return storage.DedupedRecordStreamGenerator(), nil
-		}
-		stream, err := recordStreamGeneratorFromFilterExpression(ctx, backend, and[0])
-		if err != nil {
-			return nil, err
-		}
-		for i := 1; i < len(and); i++ {
-			filter, err := storage.RecordStreamFilterFromFilterExpression(expr)
-			if err != nil {
-				return nil, err
-			}
-			stream = storage.FilteredRecordStreamGenerator(stream, filter)
-		}
-		return stream, nil
-	}
-
-	if or, ok := expr.(storage.OrFilterExpression); ok {
-		var generators []storage.RecordStreamGenerator
+	if or, ok := expr.(storage.OrFilterExpression); ok && len(or) > 0 {
+		var streams []storage.RecordStream
 		for _, expr := range or {
-			generator, err := recordStreamGeneratorFromFilterExpression(ctx, backend, expr)
+			stream, err := newFilteredRecordStream(ctx, backend, recordType, expr, filter)
 			if err != nil {
 				return nil, err
 			}
-			generators = append(generators, generator)
+			streams = append(streams, stream)
 		}
-		return storage.DedupedRecordStreamGenerator(generators...), nil
+		return storage.NewDedupedRecordStream(storage.NewConcatenatedRecordStream(streams...)), nil
 	}
 
 	if equals, ok := expr.(storage.EqualsFilterExpression); ok {
 		switch strings.Join(equals.Fields, ".") {
 		case "id":
-			return byIDRecordStreamGenerator(ctx, backend, equals.Value), nil
+			if recordType != "" {
+				stream := newLookupByIDRecordStream(ctx, backend, recordType, equals.Value)
+				stream = storage.NewFilteredRecordStream(stream, filter)
+				return stream, nil
+			}
 		case "$index":
-			return byIndexRecordStreamGenerator(ctx, backend, equals.Value)
 		default:
-			return nil, fmt.Errorf("unsupported filter field: %s", strings.Join(equals.Fields, "."))
+			return nil, fmt.Errorf("only id or $index is supported for filters")
 		}
 	}
 
-	return nil, fmt.Errorf("unsupported filter: %T", expr)
+	// finally return all records
+	match := ""
+	if recordType != "" {
+		match = recordType + "/*"
+	}
+	stream := newRecordStream(ctx, backend, match)
+	stream = storage.NewFilteredRecordStream(stream, filter)
+	return stream, nil
 }
 
-func allRecordStreamGenerator(ctx context.Context, backend *Backend) storage.RecordStreamGenerator {
-	var cursor uint64
-	scannedOnce := false
-	var scannedRecords []*databroker.Record
-	return func(ctx context.Context, block bool) (*databroker.Record, error) {
-		for {
-			if len(scannedRecords) > 0 {
-				record := scannedRecords[0]
-				scannedRecords = scannedRecords[1:]
-				return record, nil
-			}
+type recordStream struct {
+	backend *Backend
+	match   string
 
-			// the cursor is reset to 0 after iteration is complete
-			if scannedOnce && cursor == 0 {
-				return nil, storage.ErrStreamDone
-			}
-
-			var err error
-			scannedRecords, err = nextScannedRecords(ctx, backend, &cursor)
-			if err != nil {
-				return nil, err
-			}
-
-			scannedOnce = true
-		}
-	}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	scannedOnce bool
+	cursor      uint64
+	pending     []*databroker.Record
+	err         error
 }
 
-func byIDRecordStreamGenerator(ctx context.Context, backend *Backend, id string) storage.RecordStreamGenerator {
-	done := false
-	return func(ctx context.Context, block bool) (*databroker.Record, error) {
-		if done {
-			return nil, storage.ErrStreamDone
-		}
-
-		value, err := backend.client.HGet(ctx, recordHashKey, id).Result()
-		if errors.Is(err, redis.Nil) {
-			return nil, storage.ErrStreamDone
-		} else if err != nil {
-			return nil, err
-		}
-
-		done = true
-		var record databroker.Record
-		err = proto.Unmarshal([]byte(value), &record)
-		return &record, err
+func newRecordStream(ctx context.Context, backend *Backend, match string) storage.RecordStream {
+	stream := &recordStream{
+		backend: backend,
+		match:   match,
 	}
+	stream.ctx, stream.cancel = context.WithCancel(ctx)
+	return stream
 }
 
-func byIndexRecordStreamGenerator(ctx context.Context, backend *Backend, value string) (storage.RecordStreamGenerator, error) {
-	filter, err := storage.RecordStreamFilterFromFilterExpression(storage.EqualsFilterExpression{
-		Fields: []string{"$index"},
-		Value:  value,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return storage.FilteredRecordStreamGenerator(allRecordStreamGenerator(ctx, backend), filter), nil
+func (stream *recordStream) Close() error {
+	stream.cancel()
+	return nil
 }
 
-func nextScannedRecords(ctx context.Context, backend *Backend, cursor *uint64) ([]*databroker.Record, error) {
-	var values []string
-	var err error
-	values, *cursor, err = backend.client.HScan(ctx, recordHashKey, *cursor, "", 0).Result()
-	if errors.Is(err, redis.Nil) {
-		return nil, storage.ErrStreamDone
-	} else if err != nil {
-		return nil, err
-	} else if len(values) == 0 {
-		return nil, storage.ErrStreamDone
-	}
-
-	var records []*databroker.Record
-	for i := 1; i < len(values); i += 2 {
-		var record databroker.Record
-		err := proto.Unmarshal([]byte(values[i]), &record)
-		if err != nil {
-			log.Warn(ctx).Err(err).Msg("redis: invalid record detected")
-			continue
-		}
-		records = append(records, &record)
-	}
-	return records, nil
-}
-
-func nextChangedRecord(ctx context.Context, backend *Backend, recordVersion *uint64) (*databroker.Record, error) {
+func (stream *recordStream) Next(block bool) bool {
 	for {
-		cmd := backend.client.ZRangeByScore(ctx, changesSetKey, &redis.ZRangeBy{
-			Min:    fmt.Sprintf("(%d", *recordVersion),
-			Max:    "+inf",
-			Offset: 0,
-			Count:  1,
-		})
-		results, err := cmd.Result()
-		if errors.Is(err, redis.Nil) {
-			return nil, storage.ErrStreamDone
-		} else if err != nil {
-			return nil, err
-		} else if len(results) == 0 {
-			return nil, storage.ErrStreamDone
+		if stream.err != nil {
+			return false
 		}
 
-		result := results[0]
-		var record databroker.Record
-		err = proto.Unmarshal([]byte(result), &record)
-		*recordVersion++
-		if err == nil {
-			return &record, nil
+		if len(stream.pending) > 1 {
+			stream.pending = stream.pending[1:]
+			return true
 		}
-		log.Warn(ctx).Err(err).Msg("redis: invalid record detected")
+
+		if stream.scannedOnce && stream.cursor == 0 {
+			return false
+		}
+
+		var values []string
+		values, stream.cursor, stream.err = stream.backend.client.HScan(
+			stream.ctx,
+			recordHashKey,
+			stream.cursor,
+			stream.match,
+			0,
+		).Result()
+		stream.scannedOnce = true
+		if errors.Is(stream.err, redis.Nil) {
+			stream.err = nil
+		} else if stream.err != nil {
+			return false
+		}
+
+		for i := 1; i < len(values); i += 2 {
+			var record databroker.Record
+			err := proto.Unmarshal([]byte(values[i]), &record)
+			if err != nil {
+				log.Warn(stream.ctx).Err(err).Msg("redis: invalid record detected")
+				continue
+			}
+			stream.pending = append(stream.pending, &record)
+		}
+
+		if len(stream.pending) > 0 {
+			return true
+		}
 	}
+}
+
+func (stream *recordStream) Record() *databroker.Record {
+	if len(stream.pending) == 0 {
+		return nil
+	}
+	return stream.pending[0]
+}
+
+func (stream *recordStream) Err() error {
+	return stream.err
+}
+
+type changedRecordStream struct {
+	backend       *Backend
+	recordVersion uint64
+
+	ctx     context.Context
+	cancel  context.CancelFunc
+	pending []*databroker.Record
+	err     error
+	ticker  *time.Ticker
+	changed chan context.Context
+}
+
+func newChangedRecordStream(ctx context.Context, backend *Backend, recordVersion uint64) storage.RecordStream {
+	stream := &changedRecordStream{
+		backend:       backend,
+		recordVersion: recordVersion,
+		ticker:        time.NewTicker(watchPollInterval),
+		changed:       backend.onChange.Bind(),
+	}
+	stream.ctx, stream.cancel = context.WithCancel(ctx)
+	return stream
+}
+
+func (stream *changedRecordStream) Close() error {
+	stream.cancel()
+	stream.ticker.Stop()
+	stream.backend.onChange.Unbind(stream.changed)
+	return nil
+}
+
+func (stream *changedRecordStream) Next(block bool) bool {
+	for {
+		if stream.err != nil {
+			return false
+		}
+
+		if len(stream.pending) > 1 {
+			stream.pending = stream.pending[1:]
+			return true
+		}
+
+		var values []string
+		values, stream.err = stream.backend.client.ZRangeByScore(
+			stream.ctx,
+			changesSetKey,
+			&redis.ZRangeBy{
+				Min:    fmt.Sprintf("(%d", stream.recordVersion),
+				Max:    "+inf",
+				Offset: 0,
+				Count:  1,
+			},
+		).Result()
+		stream.recordVersion++
+		if errors.Is(stream.err, redis.Nil) {
+			stream.err = nil
+		} else if stream.err != nil {
+			return false
+		}
+
+		if len(values) > 0 {
+			var record databroker.Record
+			err := proto.Unmarshal([]byte(values[0]), &record)
+			if err == nil {
+				stream.pending = append(stream.pending, &record)
+			} else {
+				log.Warn(stream.ctx).Err(err).Msg("redis: invalid record detected")
+			}
+		}
+
+		if len(stream.pending) > 0 {
+			return true
+		} else if !block {
+			return false
+		}
+
+		select {
+		case <-stream.ctx.Done():
+			stream.err = stream.ctx.Err()
+			return false
+		case <-stream.ticker.C:
+		case <-stream.changed:
+		}
+	}
+}
+
+func (stream *changedRecordStream) Record() *databroker.Record {
+	if len(stream.pending) == 0 {
+		return nil
+	}
+	return stream.pending[0]
+}
+
+func (stream *changedRecordStream) Err() error {
+	return stream.err
+}
+
+type lookupByIDRecordStream struct {
+	backend    *Backend
+	recordType string
+	recordID   string
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	record *databroker.Record
+	err    error
+}
+
+func newLookupByIDRecordStream(ctx context.Context, backend *Backend, recordType, recordID string) storage.RecordStream {
+	stream := &lookupByIDRecordStream{
+		backend:    backend,
+		recordType: recordType,
+		recordID:   recordID,
+	}
+	stream.ctx, stream.cancel = context.WithCancel(ctx)
+	return stream
+}
+
+func (stream *lookupByIDRecordStream) Close() error {
+	stream.cancel()
+	return nil
+}
+
+func (stream *lookupByIDRecordStream) Next(block bool) bool {
+	if stream.err != nil {
+		return false
+	}
+
+	key, field := getHashKey(stream.recordType, stream.recordID)
+	var value string
+	value, stream.err = stream.backend.client.HGet(stream.ctx, key, field).Result()
+	if errors.Is(stream.err, redis.Nil) {
+		stream.err = nil
+		return false
+	}
+
+	err := proto.Unmarshal([]byte(value), stream.record)
+	if err == nil {
+		return true
+	}
+	log.Warn(stream.ctx).Err(err).Msg("redis: invalid record detected")
+	return false
+}
+
+func (stream *lookupByIDRecordStream) Record() *databroker.Record {
+	return stream.record
+}
+
+func (stream *lookupByIDRecordStream) Err() error {
+	return stream.err
 }

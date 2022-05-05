@@ -146,3 +146,107 @@ func DedupedRecordStreamGenerator(generators ...RecordStreamGenerator) RecordStr
 		}
 	}
 }
+
+type dedupedRecordStream struct {
+	RecordStream
+	lookup map[[2]string]struct{}
+}
+
+// NewDedupedRecordStream creates a new de-duped record stream.
+func NewDedupedRecordStream(stream RecordStream) RecordStream {
+	return &dedupedRecordStream{
+		RecordStream: stream,
+		lookup:       make(map[[2]string]struct{}),
+	}
+}
+
+// Next moves the stream forward and returns true if there's a record available.
+func (stream *dedupedRecordStream) Next(block bool) bool {
+	for stream.RecordStream.Next(block) {
+		k := [2]string{stream.Record().Type, stream.Record().Id}
+		if _, ok := stream.lookup[k]; ok {
+			continue
+		}
+		stream.lookup[k] = struct{}{}
+		return true
+	}
+	return false
+}
+
+type filteredRecordStream struct {
+	RecordStream
+	filter RecordStreamFilter
+}
+
+// NewFilteredRecordStream creates a new filtered record stream.
+func NewFilteredRecordStream(stream RecordStream, filter RecordStreamFilter) RecordStream {
+	return &filteredRecordStream{
+		RecordStream: stream,
+		filter:       filter,
+	}
+}
+
+// Next moves the stream forward and returns true if there's a record available and it hasn't been filtered.
+func (stream *filteredRecordStream) Next(block bool) bool {
+	for stream.RecordStream.Next(block) {
+		if !stream.filter(stream.Record()) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+type concatenatedRecordStream struct {
+	streams []RecordStream
+	index   int
+}
+
+// NewConcatenatedRecordStream creates a new record stream that streams all the records from the
+// first stream before streaming all the records of the subsequent streams.
+func NewConcatenatedRecordStream(streams ...RecordStream) RecordStream {
+	return &concatenatedRecordStream{
+		streams: streams,
+	}
+}
+
+func (stream *concatenatedRecordStream) Close() error {
+	var err error
+	for _, s := range stream.streams {
+		if e := s.Close(); e != nil {
+			err = e
+		}
+	}
+	return err
+}
+
+func (stream *concatenatedRecordStream) Next(block bool) bool {
+	for {
+		if stream.index >= len(stream.streams) {
+			return false
+		}
+
+		if stream.streams[stream.index].Next(block) {
+			return true
+		}
+
+		if stream.streams[stream.index].Err() != nil {
+			return false
+		}
+		stream.index++
+	}
+}
+
+func (stream *concatenatedRecordStream) Record() *databroker.Record {
+	if stream.index >= len(stream.streams) {
+		return nil
+	}
+	return stream.streams[stream.index].Record()
+}
+
+func (stream *concatenatedRecordStream) Err() error {
+	if stream.index >= len(stream.streams) {
+		return nil
+	}
+	return stream.streams[stream.index].Err()
+}

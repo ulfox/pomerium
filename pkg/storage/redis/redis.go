@@ -256,14 +256,15 @@ func (backend *Backend) Sync(ctx context.Context, serverVersion, recordVersion u
 // stream is streaming.
 func (backend *Backend) SyncLatest(
 	ctx context.Context,
+	recordType string,
 	expr storage.FilterExpression,
-) (serverVersion uint64, stream storage.RecordStream, err error) {
+) (serverVersion, recordVersion uint64, stream storage.RecordStream, err error) {
 	serverVersion, err = backend.getOrCreateServerVersion(ctx)
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
-	stream, err = newSyncLatestRecordStream(ctx, backend, expr)
-	return serverVersion, stream, err
+	stream, err = newSyncLatestRecordStream(ctx, backend, recordType, expr)
+	return serverVersion, recordVersion, stream, err
 }
 
 func (backend *Backend) put(ctx context.Context, records []*databroker.Record) error {
