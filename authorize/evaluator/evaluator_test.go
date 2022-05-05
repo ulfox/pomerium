@@ -14,12 +14,12 @@ import (
 	"github.com/pomerium/pomerium/config"
 	"github.com/pomerium/pomerium/internal/httputil"
 	"github.com/pomerium/pomerium/pkg/cryptutil"
-	"github.com/pomerium/pomerium/pkg/grpc/databroker"
 	"github.com/pomerium/pomerium/pkg/grpc/directory"
 	"github.com/pomerium/pomerium/pkg/grpc/session"
 	"github.com/pomerium/pomerium/pkg/grpc/user"
 	"github.com/pomerium/pomerium/pkg/policy/criteria"
 	"github.com/pomerium/pomerium/pkg/policy/parser"
+	"github.com/pomerium/pomerium/pkg/storage"
 )
 
 func TestEvaluator(t *testing.T) {
@@ -32,7 +32,7 @@ func TestEvaluator(t *testing.T) {
 
 	eval := func(t *testing.T, options []Option, data []proto.Message, req *Request) (*Result, error) {
 		ctx := context.Background()
-		ctx = databroker.WithQuerier(ctx, databroker.NewStaticQuerier(data...))
+		ctx = storage.WithQuerier(ctx, storage.NewStaticQuerier(data...))
 		store := store.New()
 		store.UpdateIssuer("authenticate.example.com")
 		store.UpdateJWTClaimHeaders(config.NewJWTClaimHeaders("email", "groups", "user", "CUSTOM_KEY"))

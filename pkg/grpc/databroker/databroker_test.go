@@ -1,15 +1,11 @@
 package databroker
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -53,62 +49,6 @@ func TestApplyOffsetAndLimit(t *testing.T) {
 			assert.Equal(t, tc.expect, actual)
 		})
 	}
-}
-
-func TestInitialSync(t *testing.T) {
-	ctx, clearTimeout := context.WithTimeout(context.Background(), time.Second*10)
-	defer clearTimeout()
-
-	li, err := net.Listen("tcp", "127.0.0.1:0")
-	if !assert.NoError(t, err) {
-		return
-	}
-	defer li.Close()
-
-	r1 := new(Record)
-	r2 := new(Record)
-
-	m := &mockServer{
-		syncLatest: func(req *SyncLatestRequest, stream DataBrokerService_SyncLatestServer) error {
-			stream.Send(&SyncLatestResponse{
-				Response: &SyncLatestResponse_Record{
-					Record: r1,
-				},
-			})
-			stream.Send(&SyncLatestResponse{
-				Response: &SyncLatestResponse_Record{
-					Record: r2,
-				},
-			})
-			stream.Send(&SyncLatestResponse{
-				Response: &SyncLatestResponse_Versions{
-					Versions: &Versions{
-						LatestRecordVersion: 2,
-						ServerVersion:       1,
-					},
-				},
-			})
-			return nil
-		},
-	}
-
-	srv := grpc.NewServer()
-	RegisterDataBrokerServiceServer(srv, m)
-	go srv.Serve(li)
-
-	cc, err := grpc.Dial(li.Addr().String(), grpc.WithInsecure())
-	if !assert.NoError(t, err) {
-		return
-	}
-	defer cc.Close()
-
-	c := NewDataBrokerServiceClient(cc)
-
-	records, recordVersion, serverVersion, err := InitialSync(ctx, c, new(SyncLatestRequest))
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(2), recordVersion)
-	assert.Equal(t, uint64(1), serverVersion)
-	assert.Equal(t, []*Record{r1, r2}, records)
 }
 
 func TestOptimumPutRequestsFromRecords(t *testing.T) {

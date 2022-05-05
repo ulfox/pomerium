@@ -16,8 +16,8 @@ import (
 	"github.com/pomerium/pomerium/internal/sessions"
 	"github.com/pomerium/pomerium/internal/telemetry/trace"
 	"github.com/pomerium/pomerium/internal/urlutil"
-	"github.com/pomerium/pomerium/pkg/grpc/databroker"
 	"github.com/pomerium/pomerium/pkg/grpc/user"
+	"github.com/pomerium/pomerium/pkg/storage"
 )
 
 // Check implements the envoy auth server gRPC endpoint.
@@ -25,13 +25,8 @@ func (a *Authorize) Check(ctx context.Context, in *envoy_service_auth_v3.CheckRe
 	ctx, span := trace.StartSpan(ctx, "authorize.grpc.Check")
 	defer span.End()
 
-	querier := databroker.NewTracingQuerier(databroker.NewQuerier(a.state.Load().dataBrokerClient))
-	ctx = databroker.WithQuerier(ctx, querier)
-
-	// wait for the initial sync to complete so that data is available for evaluation
-	if err := a.WaitForInitialSync(ctx); err != nil {
-		return nil, err
-	}
+	querier := storage.NewTracingQuerier(storage.NewQuerier(a.state.Load().dataBrokerClient))
+	ctx = storage.WithQuerier(ctx, querier)
 
 	state := a.state.Load()
 

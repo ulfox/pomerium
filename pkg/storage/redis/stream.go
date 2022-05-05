@@ -138,7 +138,7 @@ func recordStreamGeneratorFromFilterExpression(
 		case "id":
 			return byIDRecordStreamGenerator(ctx, backend, equals.Value), nil
 		case "$index":
-			panic("not implemented")
+			return byIndexRecordStreamGenerator(ctx, backend, equals.Value)
 		default:
 			return nil, fmt.Errorf("unsupported filter field: %s", strings.Join(equals.Fields, "."))
 		}
@@ -194,6 +194,17 @@ func byIDRecordStreamGenerator(ctx context.Context, backend *Backend, id string)
 		err = proto.Unmarshal([]byte(value), &record)
 		return &record, err
 	}
+}
+
+func byIndexRecordStreamGenerator(ctx context.Context, backend *Backend, value string) (storage.RecordStreamGenerator, error) {
+	filter, err := storage.RecordStreamFilterFromFilterExpression(storage.EqualsFilterExpression{
+		Fields: []string{"$index"},
+		Value:  value,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return storage.FilteredRecordStreamGenerator(allRecordStreamGenerator(ctx, backend), filter), nil
 }
 
 func nextScannedRecords(ctx context.Context, backend *Backend, cursor *uint64) ([]*databroker.Record, error) {

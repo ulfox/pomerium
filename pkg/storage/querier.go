@@ -1,4 +1,4 @@
-package databroker
+package storage
 
 import (
 	"context"
@@ -13,18 +13,19 @@ import (
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/pomerium/pomerium/pkg/cryptutil"
+	"github.com/pomerium/pomerium/pkg/grpc/databroker"
 	"github.com/pomerium/pomerium/pkg/protoutil"
 )
 
 // A Querier is a read-only subset of the client methods
 type Querier interface {
-	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error)
+	Query(ctx context.Context, in *databroker.QueryRequest, opts ...grpc.CallOption) (*databroker.QueryResponse, error)
 }
 
 // nilQuerier always returns NotFound.
 type nilQuerier struct{}
 
-func (nilQuerier) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
+func (nilQuerier) Query(ctx context.Context, in *databroker.QueryRequest, opts ...grpc.CallOption) (*databroker.QueryResponse, error) {
 	return nil, status.Error(codes.NotFound, "not implemented")
 }
 
@@ -46,7 +47,7 @@ func WithQuerier(ctx context.Context, querier Querier) context.Context {
 
 // A StaticQuerier implements the Querier interface by returning statically defined protobuf messages.
 type StaticQuerier struct {
-	records []*Record
+	records []*databroker.Record
 }
 
 // NewStaticQuerier creates a new StaticQuerier.
@@ -54,7 +55,7 @@ func NewStaticQuerier(msgs ...proto.Message) *StaticQuerier {
 	getter := &StaticQuerier{}
 	for _, msg := range msgs {
 		any := protoutil.NewAny(msg)
-		record := new(Record)
+		record := new(databroker.Record)
 		record.ModifiedAt = timestamppb.Now()
 		record.Version = cryptutil.NewRandomUInt64()
 		record.Id = uuid.New().String()
@@ -69,22 +70,56 @@ func NewStaticQuerier(msgs ...proto.Message) *StaticQuerier {
 }
 
 // Query queries for records.
-func (q *StaticQuerier) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
-	return nil, status.Error(codes.NotFound, "not implemented")
+func (q *StaticQuerier) Query(ctx context.Context, in *databroker.QueryRequest, opts ...grpc.CallOption) (*databroker.QueryResponse, error) {
+	expr, err := FilterExpressionFromStruct(in.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+
+	filter, err := RecordStreamFilterFromFilterExpression(expr)
+	if err != nil {
+		return nil, err
+	}
+
+	res := new(databroker.QueryResponse)
+	for _, record := range q.records {
+		if record.GetType() != in.GetType() {
+			continue
+		}
+
+		if !filter(record) {
+			continue
+		}
+
+		if in.GetQuery() != "" && !MatchAny(record.GetData(), in.GetQuery()) {
+			continue
+		}
+
+		res.Records = append(res.Records, record)
+	}
+
+	var total int
+	res.Records, total = databroker.ApplyOffsetAndLimit(
+		res.Records,
+		int(in.GetOffset()),
+		int(in.GetLimit()),
+	)
+	res.TotalCount = int64(total)
+	return res, nil
 }
 
 // A ClientQuerier implements the Querier interface by making calls to the databroker over gRPC.
 type ClientQuerier struct {
-	client DataBrokerServiceClient
+	client databroker.DataBrokerServiceClient
 }
 
 // NewQuerier creates a new Querier from a client.
-func NewQuerier(client DataBrokerServiceClient) Querier {
+func NewQuerier(client databroker.DataBrokerServiceClient) Querier {
 	return &ClientQuerier{client: client}
 }
 
 // Query queries for records.
-func (q *ClientQuerier) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
+func (q *ClientQuerier) Query(ctx context.Context, in *databroker.QueryRequest, opts ...grpc.CallOption) (*databroker.QueryResponse, error) {
 	return q.client.Query(ctx, in, opts...)
 }
 
@@ -113,7 +148,7 @@ func NewTracingQuerier(q Querier) *TracingQuerier {
 }
 
 // Query queries for records.
-func (q *TracingQuerier) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
+func (q *TracingQuerier) Query(ctx context.Context, in *databroker.QueryRequest, opts ...grpc.CallOption) (*databroker.QueryResponse, error) {
 	res, err := q.underlying.Query(ctx, in, opts...)
 	if err == nil {
 		q.mu.Lock()

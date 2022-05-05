@@ -28,8 +28,6 @@ type Authorize struct {
 	currentOptions *config.AtomicOptions
 	accessTracker  *AccessTracker
 
-	dataBrokerInitialSync chan struct{}
-
 	// The stateLock prevents updating the evaluator store simultaneously with an evaluation.
 	// This should provide a consistent view of the data at a given server/record version and
 	// avoid partial updates.
@@ -39,9 +37,8 @@ type Authorize struct {
 // New validates and creates a new Authorize service from a set of config options.
 func New(cfg *config.Config) (*Authorize, error) {
 	a := &Authorize{
-		currentOptions:        config.NewAtomicOptions(),
-		store:                 store.New(),
-		dataBrokerInitialSync: make(chan struct{}),
+		currentOptions: config.NewAtomicOptions(),
+		store:          store.New(),
 	}
 	a.accessTracker = NewAccessTracker(a, accessTrackerMaxSize, accessTrackerDebouncePeriod)
 
@@ -71,16 +68,6 @@ func (a *Authorize) Run(ctx context.Context) error {
 		return nil
 	})
 	return eg.Wait()
-}
-
-// WaitForInitialSync blocks until the initial sync is complete.
-func (a *Authorize) WaitForInitialSync(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-a.dataBrokerInitialSync:
-	}
-	return nil
 }
 
 func validateOptions(o *config.Options) error {

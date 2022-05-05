@@ -136,6 +136,7 @@ func (srv *Server) Query(ctx context.Context, req *databroker.QueryRequest) (*da
 		Str("query", req.GetQuery()).
 		Int64("offset", req.GetOffset()).
 		Int64("limit", req.GetLimit()).
+		Interface("filter", req.GetFilter()).
 		Msg("query")
 
 	query := strings.ToLower(req.GetQuery())

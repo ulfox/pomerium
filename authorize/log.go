@@ -16,6 +16,7 @@ import (
 	"github.com/pomerium/pomerium/pkg/grpc/session"
 	"github.com/pomerium/pomerium/pkg/grpc/user"
 	"github.com/pomerium/pomerium/pkg/grpcutil"
+	"github.com/pomerium/pomerium/pkg/storage"
 )
 
 func (a *Authorize) logAuthorizeCheck(
@@ -97,7 +98,7 @@ func (a *Authorize) populateLogSessionDetails(ctx context.Context, evt *zerolog.
 		return evt
 	}
 
-	querier := databroker.GetQuerier(ctx)
+	querier := storage.GetQuerier(ctx)
 
 	evt = evt.Str("impersonate-session-id", s.GetImpersonateSessionId())
 	req := &databroker.QueryRequest{

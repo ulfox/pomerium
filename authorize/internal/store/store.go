@@ -9,7 +9,7 @@ import (
 	"github.com/go-jose/go-jose/v3"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/rego"
-	"github.com/open-policy-agent/opa/storage"
+	opastorage "github.com/open-policy-agent/opa/storage"
 	"github.com/open-policy-agent/opa/storage/inmem"
 	"github.com/open-policy-agent/opa/types"
 	"google.golang.org/protobuf/proto"
@@ -17,11 +17,12 @@ import (
 	"github.com/pomerium/pomerium/config"
 	"github.com/pomerium/pomerium/internal/log"
 	"github.com/pomerium/pomerium/pkg/grpc/databroker"
+	"github.com/pomerium/pomerium/pkg/storage"
 )
 
 // A Store stores data for the OPA rego policy evaluation.
 type Store struct {
-	storage.Store
+	opastorage.Store
 }
 
 // New creates a new Store.
@@ -60,7 +61,7 @@ func (s *Store) UpdateSigningKey(signingKey *jose.JSONWebKey) {
 
 func (s *Store) write(rawPath string, value interface{}) {
 	ctx := context.TODO()
-	err := storage.Txn(ctx, s.Store, storage.WriteParams, func(txn storage.Transaction) error {
+	err := opastorage.Txn(ctx, s.Store, opastorage.WriteParams, func(txn opastorage.Transaction) error {
 		return s.writeTxn(txn, rawPath, value)
 	})
 	if err != nil {
@@ -69,23 +70,23 @@ func (s *Store) write(rawPath string, value interface{}) {
 	}
 }
 
-func (s *Store) writeTxn(txn storage.Transaction, rawPath string, value interface{}) error {
-	p, ok := storage.ParsePath(rawPath)
+func (s *Store) writeTxn(txn opastorage.Transaction, rawPath string, value interface{}) error {
+	p, ok := opastorage.ParsePath(rawPath)
 	if !ok {
 		return fmt.Errorf("invalid path")
 	}
 
 	if len(p) > 1 {
-		err := storage.MakeDir(context.Background(), s, txn, p[:len(p)-1])
+		err := opastorage.MakeDir(context.Background(), s, txn, p[:len(p)-1])
 		if err != nil {
 			return err
 		}
 	}
 
-	var op storage.PatchOp = storage.ReplaceOp
+	var op opastorage.PatchOp = opastorage.ReplaceOp
 	_, err := s.Read(context.Background(), txn, p)
-	if storage.IsNotFound(err) {
-		op = storage.AddOp
+	if opastorage.IsNotFound(err) {
+		op = opastorage.AddOp
 	} else if err != nil {
 		return err
 	}
@@ -118,13 +119,10 @@ func (s *Store) GetDataBrokerRecordOption() func(*rego.Rego) {
 		}
 		req.SetFilterByIDOrIndex(string(value))
 
-		res, err := databroker.GetQuerier(bctx.Context).Query(bctx.Context, req)
-		if storage.IsNotFound(err) {
-			return ast.NullTerm(), nil
-		} else if err != nil {
+		res, err := storage.GetQuerier(bctx.Context).Query(bctx.Context, req)
+		if err != nil {
 			return nil, err
 		}
-
 		if len(res.GetRecords()) == 0 {
 			return ast.NullTerm(), nil
 		}
