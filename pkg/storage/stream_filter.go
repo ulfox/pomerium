@@ -32,6 +32,10 @@ func FilteredRecordStreamGenerator(generator RecordStreamGenerator, filter Recor
 
 // RecordStreamFilterFromFilterExpression returns a RecordStreamFilter from a FilterExpression.
 func RecordStreamFilterFromFilterExpression(expr FilterExpression) (filter RecordStreamFilter, err error) {
+	if expr == nil {
+		return func(record *databroker.Record) (keep bool) { return true }, nil
+	}
+
 	switch expr := expr.(type) {
 	case AndFilterExpression:
 		if len(expr) == 0 {

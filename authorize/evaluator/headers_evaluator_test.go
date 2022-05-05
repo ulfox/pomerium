@@ -53,7 +53,7 @@ func TestHeadersEvaluator(t *testing.T) {
 
 	eval := func(t *testing.T, data []proto.Message, input *HeadersRequest) (*HeadersResponse, error) {
 		ctx := context.Background()
-		ctx = databroker.WithGetter(ctx, databroker.NewStaticGetter(data...))
+		ctx = databroker.WithQuerier(ctx, databroker.NewStaticQuerier(data...))
 		store := store.New()
 		store.UpdateIssuer("authenticate.example.com")
 		store.UpdateJWTClaimHeaders(config.NewJWTClaimHeaders("email", "groups", "user", "CUSTOM_KEY"))

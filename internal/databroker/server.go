@@ -145,7 +145,12 @@ func (srv *Server) Query(ctx context.Context, req *databroker.QueryRequest) (*da
 		return nil, err
 	}
 
-	_, stream, err := db.SyncLatest(ctx)
+	expr, err := storage.FilterExpressionFromStruct(req.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+
+	_, stream, err := db.SyncLatest(ctx, expr)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +337,7 @@ func (srv *Server) SyncLatest(req *databroker.SyncLatestRequest, stream databrok
 		return err
 	}
 
-	serverVersion, recordStream, err := backend.SyncLatest(ctx)
+	serverVersion, recordStream, err := backend.SyncLatest(ctx, nil)
 	if err != nil {
 		return err
 	}

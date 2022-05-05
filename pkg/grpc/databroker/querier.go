@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/pomerium/pomerium/pkg/cryptutil"
@@ -99,8 +100,9 @@ type TracingQuerier struct {
 type QueryTrace struct {
 	ServerVersion, RecordVersion uint64
 
-	RecordType    string
-	Query, Filter string
+	RecordType string
+	Query      string
+	Filter     *structpb.Struct
 }
 
 // NewTracingQuerier creates a new TracingQuerier.

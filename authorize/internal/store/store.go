@@ -112,18 +112,24 @@ func (s *Store) GetDataBrokerRecordOption() func(*rego.Rego) {
 			return nil, fmt.Errorf("invalid record id: %T", op2)
 		}
 
-		getter := databroker.GetGetter(bctx.Context)
-		res, err := getter.Get(bctx.Context, &databroker.GetRequest{
-			Type: string(recordType),
-			Id:   string(value),
-		})
+		req := &databroker.QueryRequest{
+			Type:  string(recordType),
+			Limit: 1,
+		}
+		req.SetFilterByIDOrIndex(string(value))
+
+		res, err := databroker.GetQuerier(bctx.Context).Query(bctx.Context, req)
 		if storage.IsNotFound(err) {
 			return ast.NullTerm(), nil
 		} else if err != nil {
 			return nil, err
 		}
 
-		msg, _ := res.GetRecord().GetData().UnmarshalNew()
+		if len(res.GetRecords()) == 0 {
+			return ast.NullTerm(), nil
+		}
+
+		msg, _ := res.GetRecords()[0].GetData().UnmarshalNew()
 		if msg == nil {
 			return ast.NullTerm(), nil
 		}

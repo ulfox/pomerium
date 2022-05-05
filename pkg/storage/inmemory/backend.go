@@ -255,12 +255,15 @@ func (backend *Backend) Sync(ctx context.Context, serverVersion, recordVersion u
 }
 
 // SyncLatest returns a record stream for all the records.
-func (backend *Backend) SyncLatest(ctx context.Context) (serverVersion uint64, stream storage.RecordStream, err error) {
+func (backend *Backend) SyncLatest(
+	ctx context.Context,
+	expr storage.FilterExpression,
+) (serverVersion uint64, stream storage.RecordStream, err error) {
 	backend.mu.RLock()
 	currentServerVersion := backend.serverVersion
 	backend.mu.RUnlock()
-
-	return currentServerVersion, newSyncLatestRecordStream(ctx, backend), nil
+	stream, err = newSyncLatestRecordStream(ctx, backend, expr)
+	return currentServerVersion, stream, err
 }
 
 func (backend *Backend) recordChange(record *databroker.Record) {

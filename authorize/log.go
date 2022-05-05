@@ -97,18 +97,20 @@ func (a *Authorize) populateLogSessionDetails(ctx context.Context, evt *zerolog.
 		return evt
 	}
 
-	getter := databroker.GetGetter(ctx)
+	querier := databroker.GetQuerier(ctx)
 
 	evt = evt.Str("impersonate-session-id", s.GetImpersonateSessionId())
-	res, err := getter.Get(ctx, &databroker.GetRequest{
-		Type: grpcutil.GetTypeURL(new(session.Session)),
-		Id:   s.GetImpersonateSessionId(),
-	})
-	if err != nil {
+	req := &databroker.QueryRequest{
+		Type:  grpcutil.GetTypeURL(new(session.Session)),
+		Limit: 1,
+	}
+	req.SetFilterByID(s.GetImpersonateSessionId())
+	res, err := querier.Query(ctx, req)
+	if err != nil || len(res.GetRecords()) == 0 {
 		return evt
 	}
 
-	impersonatedSessionMsg, err := res.GetRecord().GetData().UnmarshalNew()
+	impersonatedSessionMsg, err := res.GetRecords()[0].GetData().UnmarshalNew()
 	if err != nil {
 		return evt
 	}
@@ -119,15 +121,17 @@ func (a *Authorize) populateLogSessionDetails(ctx context.Context, evt *zerolog.
 	}
 	evt = evt.Str("impersonate-user-id", impersonatedSession.GetUserId())
 
-	res, err = getter.Get(ctx, &databroker.GetRequest{
-		Type: grpcutil.GetTypeURL(new(user.User)),
-		Id:   impersonatedSession.GetUserId(),
-	})
-	if err != nil {
+	req = &databroker.QueryRequest{
+		Type:  grpcutil.GetTypeURL(new(user.User)),
+		Limit: 1,
+	}
+	req.SetFilterByID(impersonatedSession.GetUserId())
+	res, err = querier.Query(ctx, req)
+	if err != nil || len(res.GetRecords()) == 0 {
 		return evt
 	}
 
-	impersonatedUserMsg, err := res.GetRecord().GetData().UnmarshalNew()
+	impersonatedUserMsg, err := res.GetRecords()[0].GetData().UnmarshalNew()
 	if err != nil {
 		return evt
 	}

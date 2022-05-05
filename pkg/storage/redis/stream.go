@@ -64,51 +64,34 @@ func newSyncRecordStream(
 func newSyncLatestRecordStream(
 	ctx context.Context,
 	backend *Backend,
-	filter storage.FilterExpression,
-) storage.RecordStream {
-	var recordVersion, cursor uint64
-	scannedOnce := false
-	var scannedRecords []*databroker.Record
-	return storage.NewRecordStream(ctx, backend.closed, []storage.RecordStreamGenerator{
-		// 1. get the current record version
-		func(ctx context.Context, block bool) (*databroker.Record, error) {
-			var err error
-			recordVersion, err = backend.client.Get(ctx, lastVersionKey).Uint64()
-			if errors.Is(err, redis.Nil) {
-				// this happens if there are no records
-			} else if err != nil {
-				return nil, err
-			}
-			return nil, storage.ErrStreamDone
-		},
-		// 2. stream all the records
-		func(ctx context.Context, block bool) (*databroker.Record, error) {
-			for {
-				if len(scannedRecords) > 0 {
-					record := scannedRecords[0]
-					scannedRecords = scannedRecords[1:]
-					return record, nil
-				}
+	expr storage.FilterExpression,
+) (storage.RecordStream, error) {
+	recordVersion, err := backend.client.Get(ctx, lastVersionKey).Uint64()
+	if errors.Is(err, redis.Nil) {
+		// this happens if there are no records
+	} else if err != nil {
+		return nil, err
+	}
 
-				// the cursor is reset to 0 after iteration is complete
-				if scannedOnce && cursor == 0 {
-					return nil, storage.ErrStreamDone
-				}
+	generator1, err := recordStreamGeneratorFromFilterExpression(ctx, backend, expr)
+	if err != nil {
+		return nil, err
+	}
 
-				var err error
-				scannedRecords, err = nextScannedRecords(ctx, backend, &cursor)
-				if err != nil {
-					return nil, err
-				}
-
-				scannedOnce = true
-			}
-		},
-		// 3. stream any records which have been updated in the interim
+	filter, err := storage.RecordStreamFilterFromFilterExpression(expr)
+	if err != nil {
+		return nil, err
+	}
+	generator2 := storage.FilteredRecordStreamGenerator(
 		func(ctx context.Context, block bool) (*databroker.Record, error) {
 			return nextChangedRecord(ctx, backend, &recordVersion)
 		},
-	}, nil)
+		filter,
+	)
+
+	return storage.NewRecordStream(ctx, backend.closed, []storage.RecordStreamGenerator{
+		generator1, generator2,
+	}, nil), nil
 }
 
 func recordStreamGeneratorFromFilterExpression(

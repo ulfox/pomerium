@@ -25,8 +25,8 @@ func (a *Authorize) Check(ctx context.Context, in *envoy_service_auth_v3.CheckRe
 	ctx, span := trace.StartSpan(ctx, "authorize.grpc.Check")
 	defer span.End()
 
-	getter := databroker.NewTracingGetter(databroker.NewGetter(a.state.Load().dataBrokerClient))
-	ctx = databroker.WithGetter(ctx, getter)
+	querier := databroker.NewTracingQuerier(databroker.NewQuerier(a.state.Load().dataBrokerClient))
+	ctx = databroker.WithQuerier(ctx, querier)
 
 	// wait for the initial sync to complete so that data is available for evaluation
 	if err := a.WaitForInitialSync(ctx); err != nil {
