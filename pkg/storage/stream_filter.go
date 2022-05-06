@@ -97,7 +97,7 @@ func RecordStreamFilterFromFilterExpression(expr FilterExpression) (filter Recor
 				// indexed via CIDR
 				if ip.IsValid() {
 					msg, _ := record.GetData().UnmarshalNew()
-					cidr := GetIndexCIDR(msg)
+					cidr := GetRecordIndexCIDR(msg)
 					if cidr != nil && cidr.Contains(ip) {
 						return true
 					}

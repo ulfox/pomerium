@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -93,6 +94,11 @@ func newFilteredRecordStream(
 				return stream, nil
 			}
 		case "$index":
+			if recordType != "" {
+				stream := newLookupByIndexRecordStream(ctx, backend, recordType, equals.Value)
+				stream = storage.NewFilteredRecordStream(stream, filter)
+				return stream, nil
+			}
 		default:
 			return nil, fmt.Errorf("only id or $index is supported for filters")
 		}
@@ -197,7 +203,7 @@ type changedRecordStream struct {
 
 	ctx     context.Context
 	cancel  context.CancelFunc
-	pending []*databroker.Record
+	record  *databroker.Record
 	err     error
 	ticker  *time.Ticker
 	changed chan context.Context
@@ -227,42 +233,23 @@ func (stream *changedRecordStream) Next(block bool) bool {
 			return false
 		}
 
-		if len(stream.pending) > 1 {
-			stream.pending = stream.pending[1:]
-			return true
-		}
-
-		var values []string
-		values, stream.err = stream.backend.client.ZRangeByScore(
+		stream.record, stream.err = getNextChangedRecord(
 			stream.ctx,
-			changesSetKey,
-			&redis.ZRangeBy{
-				Min:    fmt.Sprintf("(%d", stream.recordVersion),
-				Max:    "+inf",
-				Offset: 0,
-				Count:  1,
-			},
-		).Result()
-		stream.recordVersion++
-		if errors.Is(stream.err, redis.Nil) {
+			stream.backend.client,
+			stream.recordVersion,
+		)
+		if errors.Is(stream.err, storage.ErrNotFound) {
 			stream.err = nil
 		} else if stream.err != nil {
 			return false
 		}
 
-		if len(values) > 0 {
-			var record databroker.Record
-			err := proto.Unmarshal([]byte(values[0]), &record)
-			if err == nil {
-				stream.pending = append(stream.pending, &record)
-			} else {
-				log.Warn(stream.ctx).Err(err).Msg("redis: invalid record detected")
-			}
+		if stream.record != nil {
+			stream.recordVersion = stream.record.GetVersion()
+			return true
 		}
 
-		if len(stream.pending) > 0 {
-			return true
-		} else if !block {
+		if !block {
 			return false
 		}
 
@@ -277,10 +264,7 @@ func (stream *changedRecordStream) Next(block bool) bool {
 }
 
 func (stream *changedRecordStream) Record() *databroker.Record {
-	if len(stream.pending) == 0 {
-		return nil
-	}
-	return stream.pending[0]
+	return stream.record
 }
 
 func (stream *changedRecordStream) Err() error {
@@ -318,20 +302,13 @@ func (stream *lookupByIDRecordStream) Next(block bool) bool {
 		return false
 	}
 
-	key, field := getHashKey(stream.recordType, stream.recordID)
-	var value string
-	value, stream.err = stream.backend.client.HGet(stream.ctx, key, field).Result()
-	if errors.Is(stream.err, redis.Nil) {
+	stream.record, stream.err = getRecord(stream.ctx, stream.backend.client, stream.recordType, stream.recordID)
+	if errors.Is(stream.err, storage.ErrNotFound) {
 		stream.err = nil
 		return false
 	}
 
-	err := proto.Unmarshal([]byte(value), stream.record)
-	if err == nil {
-		return true
-	}
-	log.Warn(stream.ctx).Err(err).Msg("redis: invalid record detected")
-	return false
+	return stream.err == nil
 }
 
 func (stream *lookupByIDRecordStream) Record() *databroker.Record {
@@ -339,5 +316,61 @@ func (stream *lookupByIDRecordStream) Record() *databroker.Record {
 }
 
 func (stream *lookupByIDRecordStream) Err() error {
+	return stream.err
+}
+
+type lookupByIndexRecordStream struct {
+	backend    *Backend
+	recordType string
+	indexValue string
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	record *databroker.Record
+	err    error
+}
+
+func newLookupByIndexRecordStream(ctx context.Context, backend *Backend, recordType, indexValue string) storage.RecordStream {
+	stream := &lookupByIndexRecordStream{
+		backend:    backend,
+		recordType: recordType,
+		indexValue: indexValue,
+	}
+	stream.ctx, stream.cancel = context.WithCancel(ctx)
+	return stream
+}
+
+func (stream *lookupByIndexRecordStream) Close() error {
+	stream.cancel()
+	return nil
+}
+
+func (stream *lookupByIndexRecordStream) Next(block bool) bool {
+	if stream.err != nil {
+		return false
+	}
+
+	if addr, err := netip.ParseAddr(stream.indexValue); err == nil {
+		stream.record, stream.err = findRecordByIndexCIDR(
+			stream.ctx,
+			stream.backend.client,
+			stream.recordType,
+			addr,
+		)
+		if errors.Is(stream.err, storage.ErrNotFound) {
+			stream.err = nil
+			return false
+		}
+		return stream.err == nil
+	}
+
+	return false
+}
+
+func (stream *lookupByIndexRecordStream) Record() *databroker.Record {
+	return stream.record
+}
+
+func (stream *lookupByIndexRecordStream) Err() error {
 	return stream.err
 }

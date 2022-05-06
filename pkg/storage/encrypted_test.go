@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
@@ -47,29 +49,59 @@ func TestEncryptedBackend(t *testing.T) {
 		return
 	}
 
-	any := protoutil.NewAny(wrapperspb.String("HELLO WORLD"))
+	t.Run("simple", func(t *testing.T) {
+		any := protoutil.NewAny(wrapperspb.String("HELLO WORLD"))
+		rec := &databroker.Record{
+			Type: "",
+			Id:   "TEST-1",
+			Data: any,
+		}
+		_, err = e.Put(ctx, []*databroker.Record{rec})
+		if !assert.NoError(t, err) {
+			return
+		}
+		if assert.NotNil(t, m["TEST-1"], "key should be set") {
+			assert.NotEqual(t, any.TypeUrl, m["TEST-1"].TypeUrl, "encrypted data should be a bytes type")
+			assert.NotEqual(t, any.Value, m["TEST-1"].Value, "value should be encrypted")
+			assert.NotNil(t, rec.ModifiedAt)
+			assert.NotZero(t, rec.Version)
+		}
 
-	rec := &databroker.Record{
-		Type: "",
-		Id:   "TEST-1",
-		Data: any,
-	}
-	_, err = e.Put(ctx, []*databroker.Record{rec})
-	if !assert.NoError(t, err) {
-		return
-	}
-	if assert.NotNil(t, m["TEST-1"], "key should be set") {
-		assert.NotEqual(t, any.TypeUrl, m["TEST-1"].TypeUrl, "encrypted data should be a bytes type")
-		assert.NotEqual(t, any.Value, m["TEST-1"].Value, "value should be encrypted")
-		assert.NotNil(t, rec.ModifiedAt)
-		assert.NotZero(t, rec.Version)
-	}
+		record, err := e.Get(ctx, "", "TEST-1")
+		if !assert.NoError(t, err) {
+			return
+		}
+		assert.Equal(t, any.TypeUrl, record.Data.TypeUrl, "type should be preserved")
+		assert.Equal(t, any.Value, record.Data.Value, "value should be preserved")
+		assert.NotEqual(t, any.TypeUrl, record.Type, "record type should be preserved")
+	})
 
-	record, err := e.Get(ctx, "", "TEST-1")
-	if !assert.NoError(t, err) {
-		return
-	}
-	assert.Equal(t, any.TypeUrl, record.Data.TypeUrl, "type should be preserved")
-	assert.Equal(t, any.Value, record.Data.Value, "value should be preserved")
-	assert.NotEqual(t, any.TypeUrl, record.Type, "record type should be preserved")
+	t.Run("index", func(t *testing.T) {
+		s, err := structpb.NewStruct(map[string]interface{}{
+			"$index": map[string]interface{}{
+				"cidr": "192.168.0.0/16",
+			},
+			"example": "value",
+		})
+		require.NoError(t, err)
+		any := protoutil.NewAny(s)
+		record := &databroker.Record{
+			Id:   "TEST-2",
+			Data: any,
+		}
+		_, err = e.Put(ctx, []*databroker.Record{record})
+		require.NoError(t, err)
+
+		if assert.NotNil(t, m["TEST-2"], "key should be set") {
+			assert.NotEqual(t, any.Value, m["TEST-2"].Value, "value should be encrypted")
+			assert.NotNil(t, record.ModifiedAt)
+			assert.NotZero(t, record.Version)
+		}
+
+		record, err = e.Get(ctx, "", "TEST-2")
+		require.NoError(t, err)
+		assert.Equal(t, any.TypeUrl, record.Data.TypeUrl, "type should be preserved")
+		assert.Equal(t, any.Value, record.Data.Value, "value should be preserved")
+		assert.NotEqual(t, any.TypeUrl, record.Type, "record type should be preserved")
+	})
 }

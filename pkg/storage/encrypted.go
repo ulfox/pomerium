@@ -3,10 +3,13 @@ package storage
 import (
 	"context"
 	"crypto/cipher"
+	"encoding/base64"
+	"fmt"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/pomerium/pomerium/pkg/cryptutil"
@@ -162,13 +165,29 @@ func (e *encryptedBackend) decrypt(in *anypb.Any) (out *anypb.Any, err error) {
 		return nil, nil
 	}
 
-	var encrypted wrapperspb.BytesValue
-	err = in.UnmarshalTo(&encrypted)
+	msg, err := in.UnmarshalNew()
 	if err != nil {
 		return nil, err
 	}
 
-	plaintext, err := cryptutil.Decrypt(e.cipher, encrypted.Value, nil)
+	var encrypted []byte
+	switch msg := msg.(type) {
+	case *wrapperspb.BytesValue:
+		encrypted = msg.Value
+	case *structpb.Struct:
+		v, ok := msg.GetFields()["encrypted"]
+		if !ok {
+			return nil, fmt.Errorf("missing encrypted field in struct")
+		}
+		encrypted, err = base64.StdEncoding.DecodeString(v.GetStringValue())
+		if err != nil {
+			return nil, fmt.Errorf("unexpected encrypted payload in struct: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unexpected protobuf type in encrypted payload: %T", encrypted)
+	}
+
+	plaintext, err := cryptutil.Decrypt(e.cipher, encrypted, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -189,8 +208,18 @@ func (e *encryptedBackend) encrypt(in *anypb.Any) (out *anypb.Any, err error) {
 	}
 
 	encrypted := cryptutil.Encrypt(e.cipher, plaintext, nil)
-	out = protoutil.NewAny(&wrapperspb.BytesValue{
+
+	// anything in the "$index" field will be preserved
+	if index := GetRecordIndex(in); index != nil {
+		return protoutil.NewAny(&structpb.Struct{
+			Fields: map[string]*structpb.Value{
+				"encrypted": structpb.NewStringValue(base64.StdEncoding.EncodeToString(encrypted)),
+				"index":     structpb.NewStructValue(index),
+			},
+		}), nil
+	}
+
+	return protoutil.NewAny(&wrapperspb.BytesValue{
 		Value: encrypted,
-	})
-	return out, nil
+	}), nil
 }
