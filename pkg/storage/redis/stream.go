@@ -75,8 +75,8 @@ func newFilteredRecordStream(
 
 	if or, ok := expr.(storage.OrFilterExpression); ok && len(or) > 0 {
 		var streams []storage.RecordStream
-		for _, expr := range or {
-			stream, err := newFilteredRecordStream(ctx, backend, recordType, expr, filter)
+		for _, subExpr := range or {
+			stream, err := newFilteredRecordStream(ctx, backend, recordType, subExpr, filter)
 			if err != nil {
 				return nil, err
 			}
@@ -89,15 +89,22 @@ func newFilteredRecordStream(
 		switch strings.Join(equals.Fields, ".") {
 		case "id":
 			if recordType != "" {
-				stream := newLookupByIDRecordStream(ctx, backend, recordType, equals.Value)
-				stream = storage.NewFilteredRecordStream(stream, filter)
-				return stream, nil
+				recordID := equals.Value
+				return storage.NewSingleRecordStream(ctx, func(ctx context.Context) (*databroker.Record, error) {
+					record, err := getRecord(ctx, backend.client, recordType, recordID)
+					return record, err
+				}), nil
 			}
 		case "$index":
 			if recordType != "" {
-				stream := newLookupByIndexRecordStream(ctx, backend, recordType, equals.Value)
-				stream = storage.NewFilteredRecordStream(stream, filter)
-				return stream, nil
+				indexValue := equals.Value
+				return storage.NewSingleRecordStream(ctx, func(ctx context.Context) (*databroker.Record, error) {
+					if addr, err := netip.ParseAddr(indexValue); err == nil {
+						record, err := findRecordByIndexCIDR(ctx, backend.client, recordType, addr)
+						return record, err
+					}
+					return nil, storage.ErrNotFound
+				}), nil
 			}
 		default:
 			return nil, fmt.Errorf("only id or $index is supported for filters")
@@ -268,109 +275,5 @@ func (stream *changedRecordStream) Record() *databroker.Record {
 }
 
 func (stream *changedRecordStream) Err() error {
-	return stream.err
-}
-
-type lookupByIDRecordStream struct {
-	backend    *Backend
-	recordType string
-	recordID   string
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	record *databroker.Record
-	err    error
-}
-
-func newLookupByIDRecordStream(ctx context.Context, backend *Backend, recordType, recordID string) storage.RecordStream {
-	stream := &lookupByIDRecordStream{
-		backend:    backend,
-		recordType: recordType,
-		recordID:   recordID,
-	}
-	stream.ctx, stream.cancel = context.WithCancel(ctx)
-	return stream
-}
-
-func (stream *lookupByIDRecordStream) Close() error {
-	stream.cancel()
-	return nil
-}
-
-func (stream *lookupByIDRecordStream) Next(block bool) bool {
-	if stream.err != nil {
-		return false
-	}
-
-	stream.record, stream.err = getRecord(stream.ctx, stream.backend.client, stream.recordType, stream.recordID)
-	if errors.Is(stream.err, storage.ErrNotFound) {
-		stream.err = nil
-		return false
-	}
-
-	return stream.err == nil
-}
-
-func (stream *lookupByIDRecordStream) Record() *databroker.Record {
-	return stream.record
-}
-
-func (stream *lookupByIDRecordStream) Err() error {
-	return stream.err
-}
-
-type lookupByIndexRecordStream struct {
-	backend    *Backend
-	recordType string
-	indexValue string
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	record *databroker.Record
-	err    error
-}
-
-func newLookupByIndexRecordStream(ctx context.Context, backend *Backend, recordType, indexValue string) storage.RecordStream {
-	stream := &lookupByIndexRecordStream{
-		backend:    backend,
-		recordType: recordType,
-		indexValue: indexValue,
-	}
-	stream.ctx, stream.cancel = context.WithCancel(ctx)
-	return stream
-}
-
-func (stream *lookupByIndexRecordStream) Close() error {
-	stream.cancel()
-	return nil
-}
-
-func (stream *lookupByIndexRecordStream) Next(block bool) bool {
-	if stream.err != nil {
-		return false
-	}
-
-	if addr, err := netip.ParseAddr(stream.indexValue); err == nil {
-		stream.record, stream.err = findRecordByIndexCIDR(
-			stream.ctx,
-			stream.backend.client,
-			stream.recordType,
-			addr,
-		)
-		if errors.Is(stream.err, storage.ErrNotFound) {
-			stream.err = nil
-			return false
-		}
-		return stream.err == nil
-	}
-
-	return false
-}
-
-func (stream *lookupByIndexRecordStream) Record() *databroker.Record {
-	return stream.record
-}
-
-func (stream *lookupByIndexRecordStream) Err() error {
 	return stream.err
 }

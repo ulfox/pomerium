@@ -25,7 +25,15 @@ func (a *Authorize) Check(ctx context.Context, in *envoy_service_auth_v3.CheckRe
 	ctx, span := trace.StartSpan(ctx, "authorize.grpc.Check")
 	defer span.End()
 
-	querier := storage.NewTracingQuerier(storage.NewQuerier(a.state.Load().dataBrokerClient))
+	querier := storage.NewTracingQuerier(
+		storage.NewCachingQuerier(
+			storage.NewCachingQuerier(
+				storage.NewQuerier(a.state.Load().dataBrokerClient),
+				a.globalCache,
+			),
+			storage.NewLocalCache(),
+		),
+	)
 	ctx = storage.WithQuerier(ctx, querier)
 
 	state := a.state.Load()

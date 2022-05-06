@@ -250,3 +250,47 @@ func (stream *concatenatedRecordStream) Err() error {
 	}
 	return stream.streams[stream.index].Err()
 }
+
+type singleRecordStream struct {
+	getter func(context.Context) (*databroker.Record, error)
+	ctx    context.Context
+	cancel context.CancelFunc
+	record *databroker.Record
+	err    error
+}
+
+func (stream *singleRecordStream) Close() error {
+	stream.cancel()
+	return nil
+}
+
+func (stream *singleRecordStream) Next(block bool) bool {
+	if stream.record != nil || stream.err != nil {
+		return false
+	}
+
+	stream.record, stream.err = stream.getter(stream.ctx)
+	if errors.Is(stream.err, ErrNotFound) {
+		stream.err = nil
+		return false
+	}
+
+	return stream.err == nil
+}
+
+func (stream *singleRecordStream) Record() *databroker.Record {
+	return stream.record
+}
+
+func (stream *singleRecordStream) Err() error {
+	return stream.err
+}
+
+// NewSingleRecordStream creates a new RecordStream that returns a single record.
+func NewSingleRecordStream(ctx context.Context, getter func(context.Context) (*databroker.Record, error)) RecordStream {
+	stream := &singleRecordStream{
+		getter: getter,
+	}
+	stream.ctx, stream.cancel = context.WithCancel(ctx)
+	return stream
+}

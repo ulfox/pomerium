@@ -121,8 +121,10 @@ func (s *Store) GetDataBrokerRecordOption() func(*rego.Rego) {
 
 		res, err := storage.GetQuerier(bctx.Context).Query(bctx.Context, req)
 		if err != nil {
-			return nil, err
+			log.Error(bctx.Context).Err(err).Msg("authorize/store: error retrieving record")
+			return ast.NullTerm(), nil
 		}
+
 		if len(res.GetRecords()) == 0 {
 			return ast.NullTerm(), nil
 		}
@@ -135,7 +137,8 @@ func (s *Store) GetDataBrokerRecordOption() func(*rego.Rego) {
 
 		regoValue, err := ast.InterfaceToValue(obj)
 		if err != nil {
-			return nil, err
+			log.Error(bctx.Context).Err(err).Msg("authorize/store: error converting object to rego")
+			return ast.NullTerm(), nil
 		}
 
 		return ast.NewTerm(regoValue), nil

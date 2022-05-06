@@ -19,6 +19,7 @@ import (
 	"github.com/pomerium/pomerium/pkg/cryptutil"
 	"github.com/pomerium/pomerium/pkg/grpc"
 	"github.com/pomerium/pomerium/pkg/grpc/databroker"
+	"github.com/pomerium/pomerium/pkg/storage"
 )
 
 // Authorize struct holds
@@ -27,6 +28,7 @@ type Authorize struct {
 	store          *store.Store
 	currentOptions *config.AtomicOptions
 	accessTracker  *AccessTracker
+	globalCache    storage.Cache
 
 	// The stateLock prevents updating the evaluator store simultaneously with an evaluation.
 	// This should provide a consistent view of the data at a given server/record version and
@@ -39,6 +41,7 @@ func New(cfg *config.Config) (*Authorize, error) {
 	a := &Authorize{
 		currentOptions: config.NewAtomicOptions(),
 		store:          store.New(),
+		globalCache:    storage.NewGlobalCache(time.Minute),
 	}
 	a.accessTracker = NewAccessTracker(a, accessTrackerMaxSize, accessTrackerDebouncePeriod)
 

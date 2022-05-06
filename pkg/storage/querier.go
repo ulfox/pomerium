@@ -170,3 +170,42 @@ func (q *TracingQuerier) Traces() []QueryTrace {
 	q.mu.Unlock()
 	return traces
 }
+
+type CachingQuerier struct {
+	q     Querier
+	cache Cache
+}
+
+func NewCachingQuerier(q Querier, cache Cache) *CachingQuerier {
+	return &CachingQuerier{
+		q:     q,
+		cache: cache,
+	}
+}
+
+func (q *CachingQuerier) Query(ctx context.Context, in *databroker.QueryRequest, opts ...grpc.CallOption) (*databroker.QueryResponse, error) {
+	key, err := (&proto.MarshalOptions{
+		Deterministic: true,
+	}).Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+
+	rawResult, err := q.cache.GetOrUpdate(ctx, key, func(ctx context.Context) ([]byte, error) {
+		res, err := q.q.Query(ctx, in, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return proto.Marshal(res)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var res databroker.QueryResponse
+	err = proto.Unmarshal(rawResult, &res)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
