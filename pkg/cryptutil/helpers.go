@@ -37,6 +37,13 @@ func NewRandomUInt64() uint64 {
 	return binary.LittleEndian.Uint64(randomBytes(8))
 }
 
+// NewRandomUInt32 returns a random uint32.
+//
+// Panics if source of randomness fails.
+func NewRandomUInt32() uint32 {
+	return binary.LittleEndian.Uint32(randomBytes(4))
+}
+
 // randomBytes generates C number of random bytes suitable for cryptographic
 // operations.
 //
